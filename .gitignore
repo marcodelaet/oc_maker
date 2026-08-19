@@ -1,0 +1,16 @@
+.python/
+_extract_*/
+_temp.*
+__pycache__/
+*.pyc
+output/
+.venv/
+venv/
+vendor/
+storage/
+web-php/config/
+6ef211ff50d025c45403e6ac3a9a98397e0ab7029428c5f0a4ee5f11049.xlsx
+Informe de Campanha - 202602-0000 - MODELO - com macros.docm
+Informe de Campanha - 202606-0001 -PUBLICIS - NÍVEA - BODY MILK V2.pdf
+modelo_layout_pdf.png
+.env.*

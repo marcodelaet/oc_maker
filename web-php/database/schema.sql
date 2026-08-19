@@ -1,0 +1,41 @@
+-- OC Maker — schema MySQL / MariaDB
+CREATE DATABASE IF NOT EXISTS oc_maker CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE oc_maker;
+
+CREATE TABLE IF NOT EXISTS documents (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(20) NOT NULL,
+    document_title VARCHAR(120) NOT NULL,
+    ads_id VARCHAR(64) NULL,
+    campanha VARCHAR(255) NULL,
+    anunciante VARCHAR(255) NULL,
+    agencia VARCHAR(255) NULL,
+    inicio DATE NULL,
+    termino DATE NULL,
+    tipo_venda VARCHAR(50) NULL,
+    tipo_deal VARCHAR(20) NULL,
+    planejador_ssp VARCHAR(100) NULL,
+    deal_id VARCHAR(255) NULL,
+    oc_informe_ssp VARCHAR(255) NULL,
+    checking_fotografico TINYINT(1) NOT NULL DEFAULT 1,
+    relatorios_adicionais TINYINT(1) NOT NULL DEFAULT 0,
+    prazo_pagamento INT NOT NULL DEFAULT 15,
+    prazo_unidade VARCHAR(10) NOT NULL DEFAULT 'DFM',
+    valor_liquido_ssp DECIMAL(18, 2) NULL,
+    tech_fee_percent DECIMAL(8, 2) NULL,
+    tech_fee_value DECIMAL(18, 2) NULL,
+    valor_publisher DECIMAL(18, 2) NULL,
+    cpm_medio DECIMAL(18, 4) NULL,
+    total_lojas INT UNSIGNED NULL,
+    total_insercoes BIGINT UNSIGNED NULL,
+    total_impactos BIGINT UNSIGNED NULL,
+    budget_bruto DECIMAL(18, 2) NULL,
+    budget_liquido DECIMAL(18, 2) NULL,
+    source_file VARCHAR(255) NULL,
+    source_path VARCHAR(500) NULL,
+    pdf_path VARCHAR(500) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_document_id (document_id),
+    KEY idx_created_at (created_at),
+    KEY idx_ads_id (ads_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

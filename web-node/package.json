@@ -1,0 +1,20 @@
+{
+  "name": "oc-maker-web-node",
+  "version": "1.0.0",
+  "description": "OC Maker — servidor Node.js para geração de Informes/OC em PDF",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "pdfmake": "^0.2.12",
+    "xlsx": "^0.18.5"
+  }
+}
