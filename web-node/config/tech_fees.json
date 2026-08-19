@@ -1,0 +1,12 @@
+{
+  "Agência": { "default": 0 },
+  "SSP": {
+    "Admooh": 15,
+    "Adsmovil": 15,
+    "Magnite": 15,
+    "Hivestack": 15,
+    "Outcon": 15,
+    "default": 15
+  },
+  "Direta": { "default": 0 }
+}

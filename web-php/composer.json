@@ -1,0 +1,14 @@
+{
+  "name": "oc-maker/web-php",
+  "description": "OC Maker — Apache/PHP 8 + MySQL",
+  "require": {
+    "php": ">=8.0",
+    "phpoffice/phpspreadsheet": "^2.0",
+    "dompdf/dompdf": "^3.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "OcMaker\\": "src/"
+    }
+  }
+}
