@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # OC Maker
 
 Gerador de **Informe de Campanha** / **Ordem de Compra** em PDF a partir de planilhas Excel (.xlsx), usando o template Word com macros como base visual.
@@ -57,3 +58,7 @@ Percentuais configuráveis em `tech_fees.json`, por **Tipo de Venda** e **Planej
 
 - Template: `Informe de Campanha - 202602-0000 - MODELO - com macros.docm`
 - Planilha e PDF de exemplo na pasta do projeto
+
+# oc_maker
+Gerador de Ordens de Compra / Informe de Campanha. Partindo dos dados da planilha de Planning. 
+
