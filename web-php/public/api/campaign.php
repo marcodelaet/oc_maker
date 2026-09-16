@@ -1,38 +1,58 @@
 <?php
 
+
+
 declare(strict_types=1);
+
+
 
 require dirname(__DIR__, 2) . '/bootstrap.php';
 
+
+
 use OcMaker\ExcelService;
 
+
+
 try {
+
     $adsId = (string) ($_POST['adsId'] ?? '');
+
     $spreadsheetKey = trim((string) ($_POST['spreadsheetKey'] ?? ''));
+
+    $sourceDocumentId = (int) ($_POST['sourceDocumentId'] ?? 0);
+
     $spreadsheet = resolveExistingSpreadsheetPath();
 
-    $cached = readCampaignSnapshotCache($spreadsheet['path'], $spreadsheetKey, $adsId);
+
+
+    $cached = readCampaignSnapshotCache($spreadsheet['path'], $spreadsheetKey, $adsId, $sourceDocumentId);
+
     if ($cached !== null) {
+
         jsonResponse(['campaign' => $cached]);
+
     }
 
+
+
     $excel = new ExcelService();
+
     $campaign = $excel->loadCampaign($spreadsheet['path'], $adsId !== '' ? $adsId : null);
 
-    $payload = [
-        'ads_id' => $campaign['ads_id'],
-        'campanha' => $campaign['campanha'],
-        'anunciante' => $campaign['anunciante'],
-        'agencia' => $campaign['agencia'],
-        'inicio' => $campaign['inicio'],
-        'termino' => $campaign['termino'],
-        'inventoryCount' => count($campaign['inventory']),
-        'totals' => $campaign['totals'],
-    ];
+    $payload = campaignSnapshotPayload($campaign);
 
-    writeCampaignSnapshotCache($spreadsheetKey, $adsId, $payload);
+
+
+    writeCampaignSnapshotCache($spreadsheet['path'], $spreadsheetKey, $adsId, $payload, $sourceDocumentId);
+
+
 
     jsonResponse(['campaign' => $payload]);
+
 } catch (Throwable $e) {
+
     jsonResponse(['error' => $e->getMessage()], 400);
+
 }
+

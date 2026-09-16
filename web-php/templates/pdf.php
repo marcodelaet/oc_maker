@@ -61,19 +61,12 @@ $logo = PdfBrand::logoDataUri();
 
 <table class="header-table">
   <tr>
-    <td style="width:42%">
+    <td style="width:100%;text-align:center">
       <?php if ($logo !== ''): ?>
-        <img src="<?= $logo ?>" alt="Converta Ads" style="height:42px;width:auto">
+        <img src="<?= $logo ?>" alt="Retail Media" style="height:52px;width:auto">
       <?php else: ?>
-        <strong style="font-size:16px;color:#3d3d3d">Converta Ads</strong><br>
-        <span style="font-size:9px;color:#666">by Retail Media</span>
+        <strong style="font-size:18px;color:#111">Retail Media</strong>
       <?php endif; ?>
-    </td>
-    <td class="company">
-      <?= htmlspecialchars(PdfBrand::COMPANY_NAME) ?><br>
-      <?= htmlspecialchars(PdfBrand::ADDRESS) ?><br>
-      <?= htmlspecialchars(PdfBrand::CITY) ?><br>
-      <?= htmlspecialchars(PdfBrand::CNPJ) ?>
     </td>
   </tr>
 </table>

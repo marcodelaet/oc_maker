@@ -1,26 +1,85 @@
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use OcMaker\AuthService;
+use OcMaker\Permission;
+use OcMaker\UserProfileService;
+
+$isDev = isDevEnvironment();
+$accountUser = (new AuthService())->currentUser();
+$isAdmin = $accountUser !== null && ($accountUser['role'] ?? '') === 'administrador';
+$canCalculator = $accountUser !== null && in_array($accountUser['role'] ?? '', ['administrador', 'financeiro'], true);
+$pageTitle = $isDev ? 'OC Maker — DESENVOLVIMENTO' : 'OC Maker';
+$footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO' : 'OC Maker — versão PHP · Apache + MariaDB/MySQL';
+?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OC Maker — PHP</title>
-  <link rel="icon" href="/maker/favicon.png" type="image/png">
-  <link rel="stylesheet" href="/maker/assets/css/app.css">
+  <title><?= htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8') ?></title>
+  <link rel="icon" href="<?= htmlspecialchars(url('favicon.png'), ENT_QUOTES, 'UTF-8') ?>" type="image/png">
+  <link rel="stylesheet" href="<?= htmlspecialchars(assetUrl('assets/css/app.css'), ENT_QUOTES, 'UTF-8') ?>">
 </head>
-<body>
+<body class="app-page <?= $isDev ? 'has-dev-banner' : '' ?>">
+<?php if ($isDev): ?>
+  <div class="dev-environment-banner" role="status" aria-live="polite">
+    <span>⚠ Ambiente de desenvolvimento — dados locais, não use em produção</span>
+  </div>
+<?php endif; ?>
   <header class="app-header">
-    <div class="container" style="margin:0 auto;padding:0 1rem;max-width:1100px">
-      <!--<span class="badge">Versão PHP 8 + MySQL</span>-->
-      <div class="row">
-        <div class="col-sm">
-          <img src="/maker/assets/logo_converta.svg" alt="Converta Ads" style="height:90px;width:auto">
+    <div class="header-inner">
+      <div class="header-top">
+        <div class="header-logo">
+          <img src="<?= htmlspecialchars(url('assets/logo_retail_media.png'), ENT_QUOTES, 'UTF-8') ?>" alt="Retail Media" onerror="this.onerror=null;this.src='<?= htmlspecialchars(url('assets/logo_converta.svg'), ENT_QUOTES, 'UTF-8') ?>'">
         </div>
-        <div class="col right">
-          <h1>OC Maker</h1>
+        <p class="header-subtitle">Gerador de Informe / OdC em PDF e histórico no banco de dados.</p>
+        <div class="header-title-block">
+          <h1>OC Maker<?= $isDev ? ' <small class="dev-title-tag">DEV</small>' : '' ?></h1>
+          <nav class="top-nav" id="authNav">
+            <button type="button" class="icon-btn icon-btn--header" id="loginLink" title="Entrar" aria-label="Entrar"></button>
+            <div id="userNav" class="user-nav hidden">
+              <button type="button" class="icon-btn icon-btn--header hidden" id="calculatorLink" title="Calculadora financeira" aria-label="Calculadora financeira"></button>
+              <div class="user-menu" id="userMenu">
+                <button type="button" class="user-menu-trigger" id="userMenuToggle" aria-expanded="false" aria-haspopup="true" aria-label="Menu do usuário">
+                  <span id="userAvatarTrigger"></span>
+                </button>
+                <div class="user-menu-panel hidden" id="userMenuPanel" role="menu">
+                  <div class="user-menu-card">
+                    <span id="userMenuAvatar"></span>
+                    <div class="user-menu-card-text">
+                      <strong id="userMenuName"></strong>
+                      <span id="userMenuEmail" class="user-menu-email"></span>
+                      <span id="userMenuRole" class="user-menu-role"></span>
+                    </div>
+                  </div>
+                  <div class="user-menu-list">
+                    <a href="#" class="user-menu-item" role="menuitem" id="userMenuAccount">
+                      <span class="user-menu-item-icon" aria-hidden="true"></span>
+                      <span>Minha conta</span>
+                    </a>
+                    <a href="#" class="user-menu-item hidden" role="menuitem" id="userMenuAdmin">
+                      <span class="user-menu-item-icon" aria-hidden="true"></span>
+                      <span>Gerenciar usuários</span>
+                    </a>
+                    <a href="#" class="user-menu-item hidden" role="menuitem" id="userMenuActivityLog">
+                      <span class="user-menu-item-icon" aria-hidden="true"></span>
+                      <span>Log de eventos</span>
+                    </a>
+                    <button type="button" class="user-menu-item user-menu-item--danger" role="menuitem" id="logoutBtn">
+                      <span class="user-menu-item-icon" aria-hidden="true"></span>
+                      <span>Sair</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </nav>
         </div>
       </div>
-      
-      <p>Gerador de Informe / OdC em PDF e histórico no banco de dados.</p>
     </div>
   </header>
 
@@ -65,7 +124,7 @@
               <label for="documentId">ID do documento</label>
               <div style="display:flex;gap:0.5rem">
                 <input type="text" id="documentId" placeholder="AAAAMM-XXXX">
-                <button type="button" class="btn btn-secondary" id="newIdBtn">↻</button>
+                <button type="button" class="icon-btn icon-btn--table" id="newIdBtn" title="Gerar novo ID" aria-label="Gerar novo ID"></button>
               </div>
             </div>
             <div>
@@ -116,7 +175,10 @@
             <label for="relatorios">Relatórios Adicionais</label>
           </div>
           <div class="actions">
-            <button type="button" class="btn btn-primary" id="generateBtn" disabled>Gerar PDF</button>
+            <button type="button" class="btn btn-primary btn-with-icon" id="generateBtn" disabled>
+              <span class="btn-icon" aria-hidden="true"></span>
+              Gerar PDF
+            </button>
           </div>
         </article>
       </section>
@@ -134,7 +196,74 @@
     </div>
   </main>
 
-  <footer class="app-footer">OC Maker — versão PHP · Apache + MariaDB/MySQL</footer>
+  <footer class="app-footer"><?= htmlspecialchars($footerLabel, ENT_QUOTES, 'UTF-8') ?></footer>
+
+  <div id="loginModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+    <div class="account-modal-panel account-modal-panel--narrow">
+      <button type="button" class="account-modal-close" id="loginModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/login-panel.php'; ?>
+    </div>
+  </div>
+
+  <?php if ($accountUser !== null): ?>
+  <div id="accountModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+    <div class="account-modal-panel account-modal-panel--account">
+      <button type="button" class="account-modal-close" id="accountModalClose" aria-label="Fechar">&times;</button>
+      <?php
+      $user = $accountUser;
+      $countryCodes = UserProfileService::COUNTRY_CODES;
+      require dirname(__DIR__) . '/templates/account-panel.php';
+      ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
+  <?php if ($canCalculator): ?>
+  <div id="calculatorModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="calculatorModalTitle">
+    <div class="account-modal-panel account-modal-panel--users">
+      <button type="button" class="account-modal-close" id="calculatorModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/calculator-panel.php'; ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
+  <?php if ($accountUser !== null): ?>
+  <div id="usersModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="usersModalTitle">
+    <div class="account-modal-panel account-modal-panel--users">
+      <button type="button" class="account-modal-close" id="usersModalClose" aria-label="Fechar">&times;</button>
+      <?php
+      $roles = Permission::ROLES;
+      $adminUserId = (int) ($accountUser['id'] ?? 0);
+      require dirname(__DIR__) . '/templates/users-panel.php';
+      ?>
+    </div>
+  </div>
+  <div id="activityLogModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="activityLogModalTitle">
+    <div class="account-modal-panel account-modal-panel--users">
+      <button type="button" class="account-modal-close" id="activityLogModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/activity-log-panel.php'; ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
+  <?php if ($accountUser !== null): ?>
+  <div id="forcePasswordModal" class="account-modal account-modal--locked hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="forcePasswordTitle">
+    <div class="account-modal-panel account-modal-panel--force-password">
+      <?php require dirname(__DIR__) . '/templates/force-password-panel.php'; ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
+  <div id="deleteModal" class="confirm-modal hidden" aria-hidden="true" role="alertdialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="confirm-modal-panel">
+      <h2 id="deleteModalTitle">Confirmar remoção</h2>
+      <p id="deleteModalMessage">Deseja remover este documento do histórico?</p>
+      <div class="confirm-modal-actions">
+        <button type="button" class="btn btn-secondary" id="deleteCancelBtn">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="deleteConfirmBtn">Remover</button>
+      </div>
+    </div>
+  </div>
 
   <div id="appLoading" class="app-loading hidden" aria-hidden="true" role="alertdialog" aria-modal="true" aria-labelledby="loadingTitle">
     <div class="app-loading-panel">
@@ -145,8 +274,62 @@
     </div>
   </div>
 
-  <script src="/maker/assets/js/loading.js"></script>
-  <script src="/maker/assets/js/financials.js"></script>
-  <script src="/maker/assets/js/app.js"></script>
+  <script>
+    window.OC_MAKER = {
+      env: <?= json_encode(appEnv(), JSON_UNESCAPED_UNICODE) ?>,
+      isDev: <?= $isDev ? 'true' : 'false' ?>,
+      basePath: <?= json_encode(appBasePath(), JSON_UNESCAPED_UNICODE) ?>,
+      csrf_token: <?= json_encode(csrfToken(), JSON_UNESCAPED_UNICODE) ?>,
+      api: {
+        parse: <?= json_encode(url('api/parse.php'), JSON_UNESCAPED_UNICODE) ?>,
+        campaign: <?= json_encode(url('api/campaign.php'), JSON_UNESCAPED_UNICODE) ?>,
+        fees: <?= json_encode(url('api/fees.php'), JSON_UNESCAPED_UNICODE) ?>,
+        generate: <?= json_encode(url('api/generate.php'), JSON_UNESCAPED_UNICODE) ?>,
+        history: <?= json_encode(url('api/history.php'), JSON_UNESCAPED_UNICODE) ?>,
+        document: <?= json_encode(url('api/document.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authMe: <?= json_encode(url('api/auth/me.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authLogin: <?= json_encode(url('api/auth/login.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authLogout: <?= json_encode(url('api/auth/logout.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authAvatar: <?= json_encode(url('api/auth/avatar.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authProfile: <?= json_encode(url('api/auth/profile.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authPassword: <?= json_encode(url('api/auth/password.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authTotpSetup: <?= json_encode(url('api/auth/totp-setup.php'), JSON_UNESCAPED_UNICODE) ?>,
+        authTotpConfirm: <?= json_encode(url('api/auth/totp-confirm.php'), JSON_UNESCAPED_UNICODE) ?>,
+        deleteDocument: <?= json_encode(url('api/documents/delete.php'), JSON_UNESCAPED_UNICODE) ?>,
+        calculator: <?= json_encode(url('api/calculator.php'), JSON_UNESCAPED_UNICODE) ?>,
+        adminUsers: <?= json_encode(url('api/admin/users.php'), JSON_UNESCAPED_UNICODE) ?>,
+        adminActivityLog: <?= json_encode(url('api/admin/activity-log.php'), JSON_UNESCAPED_UNICODE) ?>,
+        adminActivityLogExport: <?= json_encode(url('api/admin/activity-log-export.php'), JSON_UNESCAPED_UNICODE) ?>,
+      },
+      accountUser: <?= json_encode($accountUser, JSON_UNESCAPED_UNICODE) ?>,
+      urls: {
+        login: <?= json_encode(url('index.php') . '?login=1', JSON_UNESCAPED_UNICODE) ?>,
+        home: <?= json_encode(url('index.php'), JSON_UNESCAPED_UNICODE) ?>,
+        account: <?= json_encode(url('index.php') . '?account=1', JSON_UNESCAPED_UNICODE) ?>,
+        adminUsers: <?= json_encode(url('index.php') . '?users=1', JSON_UNESCAPED_UNICODE) ?>,
+        activityLog: <?= json_encode(url('index.php') . '?activityLog=1', JSON_UNESCAPED_UNICODE) ?>,
+        calculator: <?= json_encode(url('index.php') . '?calculator=1', JSON_UNESCAPED_UNICODE) ?>,
+      },
+    };
+  </script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/icons.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/loading.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/financials.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/password-policy.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/login.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php if ($accountUser !== null): ?>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/qrcode-generator.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/totp-setup.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/account.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/force-password.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php endif; ?>
+  <?php if ($canCalculator): ?>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/calculator.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php endif; ?>
+  <?php if ($accountUser !== null): ?>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/users.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/activity-log.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php endif; ?>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/app.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </body>
 </html>

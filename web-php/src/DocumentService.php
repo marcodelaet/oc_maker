@@ -55,16 +55,6 @@ final class DocumentService
         $sourcePath = (string) ($document['source_path'] ?? '');
         if ($sourcePath !== '' && is_file($sourcePath)) {
             $campaigns = $this->excel->listCampaigns($sourcePath);
-            $campaign = $this->excel->loadCampaign(
-                $sourcePath,
-                (string) ($document['ads_id'] ?? '') !== '' ? (string) $document['ads_id'] : null
-            );
-            $fin = $this->fees->financials(
-                $campaign,
-                (string) ($document['tipo_venda'] ?? 'SSP'),
-                (string) ($document['planejador_ssp'] ?? '')
-            );
-            $summary = $this->buildSummaryResponse($document, $campaign, $fin);
         }
 
         return [

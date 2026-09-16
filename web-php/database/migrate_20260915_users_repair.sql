@@ -1,0 +1,13 @@
+-- Repara tabela users criada parcialmente (colunas ausentes do schema auth)
+USE oc_maker;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS name VARCHAR(120) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS role ENUM('administrador', 'business_intelligence', 'checking', 'financeiro', 'comercial') NOT NULL DEFAULT 'comercial',
+  ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS active TINYINT(1) NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS failed_logins INT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS locked_until DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
