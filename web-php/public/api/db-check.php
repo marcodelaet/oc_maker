@@ -13,6 +13,7 @@ try {
     $pdo->query('SELECT 1');
     jsonResponse([
         'ok' => true,
+        'environment' => appEnv(),
         'host' => dbHost(),
         'resolved_host' => Database::resolvedHost(),
         'port' => dbPort(),
@@ -20,12 +21,17 @@ try {
         'sapi' => PHP_SAPI,
     ]);
 } catch (Throwable $e) {
-    jsonResponse([
+    $payload = [
         'ok' => false,
+        'environment' => appEnv(),
         'host' => dbHost(),
         'port' => dbPort(),
         'database' => dbName(),
         'sapi' => PHP_SAPI,
         'error' => $e->getMessage(),
-    ], 503);
+    ];
+    if (isDevEnvironment()) {
+        $payload['hint'] = 'Apache em Docker/Linux? Tente DB_HOST=host.docker.internal no .env.';
+    }
+    jsonResponse($payload, 503);
 }

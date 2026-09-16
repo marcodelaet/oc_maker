@@ -28,26 +28,46 @@ final class PaymentTermService
         $dateStr = $payment ? $payment->format('d/m/Y') : '—';
         return "Prazo para Pagamento: {$prazoDias} dias ({$dateStr})";
     }
+
+    /** 15 DFM após o prazo de recebimento (PI): último dia do mês do PI + 15 dias. */
+    public static function calcRepasseDate(\DateTimeInterface $piDate, int $prazoDias = 15): \DateTimeImmutable
+    {
+        $immutable = \DateTimeImmutable::createFromInterface($piDate);
+
+        return $immutable->modify('last day of this month')->modify('+' . $prazoDias . ' days');
+    }
+
+    public static function formatDateBr(string $iso): string
+    {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $iso, $m)) {
+            return $iso;
+        }
+
+        return "{$m[3]}/{$m[2]}/{$m[1]}";
+    }
 }
 
 final class PdfBrand
 {
-    public const COMPANY_NAME = 'Converta Ads Comercialização de Mídias Ltda';
-    public const ADDRESS = 'Rua Capitão Rosa, 376';
-    public const CITY = 'Jardim Paulistano - São Paulo - SP - CEP 01443-900';
-    public const CNPJ = 'CNPJ: 60.436.341/0001-36';
+    public const COMPANY_NAME = 'Retail Media';
     public const FOOTER_NOTE = '* Não esquecer de enviar / anexar os criativos da campanha para solicitar aprovação das redes';
 
     public static function logoDataUri(): string
     {
-        $png = dirname(__DIR__) . '/public/assets/logo_converta.png';
-        $svg = dirname(__DIR__) . '/public/assets/logo_converta.svg';
-        $path = is_file($png) ? $png : (is_file($svg) ? $svg : '');
-        if ($path === '') {
-            return '';
+        $candidates = [
+            dirname(__DIR__) . '/public/assets/logo_retail_media.png',
+            dirname(__DIR__) . '/public/assets/logo_retail_media.jpg',
+            dirname(__DIR__) . '/public/assets/logo_converta.png',
+        ];
+        foreach ($candidates as $path) {
+            if (is_file($path)) {
+                $mime = str_ends_with($path, '.png') ? 'image/png' : 'image/jpeg';
+
+                return 'data:' . $mime . ';base64,' . base64_encode((string) file_get_contents($path));
+            }
         }
-        $mime = str_ends_with($path, '.svg') ? 'image/svg+xml' : 'image/png';
-        return 'data:' . $mime . ';base64,' . base64_encode((string) file_get_contents($path));
+
+        return '';
     }
 
     public static function checkbox(bool $checked): string

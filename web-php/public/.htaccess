@@ -1,15 +1,18 @@
 RewriteEngine On
 
-# URLs amigáveis (opcional — o frontend usa .php diretamente)
-RewriteRule ^/maker/api/parse$ api/parse.php [L,QSA]
-RewriteRule ^/maker/api/summary$ api/summary.php [L,QSA]
-RewriteRule ^/maker/api/generate$ api/generate.php [L,QSA]
-RewriteRule ^/maker/api/history$ api/history.php [L,QSA]
-RewriteRule ^/maker/api/document$ api/document.php [L,QSA]
-RewriteRule ^/maker/api/campaign$ api/campaign.php [L,QSA]
-RewriteRule ^/maker/api/fees$ api/fees.php [L,QSA]
+# Servir arquivos estáticos sem passar pelo front controller
+RewriteRule ^(assets/|favicon\.png) - [L]
 
-# Não redirecionar arquivos reais (/maker/api/*.php, assets/*)
+# URLs amigáveis (opcional — o frontend usa .php diretamente)
+RewriteRule ^api/parse$ api/parse.php [L,QSA]
+RewriteRule ^api/summary$ api/summary.php [L,QSA]
+RewriteRule ^api/generate$ api/generate.php [L,QSA]
+RewriteRule ^api/history$ api/history.php [L,QSA]
+RewriteRule ^api/document$ api/document.php [L,QSA]
+RewriteRule ^api/campaign$ api/campaign.php [L,QSA]
+RewriteRule ^api/fees$ api/fees.php [L,QSA]
+
+# Não redirecionar arquivos reais (api/*.php, assets/*)
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]

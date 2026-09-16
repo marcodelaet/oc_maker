@@ -7,11 +7,17 @@ require dirname(__DIR__, 2) . '/bootstrap.php';
 use OcMaker\DocumentId;
 use OcMaker\DocumentRepository;
 use OcMaker\ExcelService;
+use OcMaker\InventoryRepository;
 use OcMaker\PdfFilename;
 use OcMaker\PdfService;
 use OcMaker\TechFeeService;
 
 try {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonResponse(['error' => 'Método não permitido.'], 405);
+    }
+    validateCsrf();
+
     $adsId = $_POST['adsId'] ?? null;
     $documentId = trim((string) ($_POST['documentId'] ?? ''));
     if ($documentId === '') {
@@ -27,17 +33,18 @@ try {
     $fees = new TechFeeService();
     $fin = $fees->financials($campaign, $options['tipo_venda'], $options['planejador_ssp']);
 
-    $pdfDir = dirname(__DIR__, 2) . '/storage/pdf';
-    if (!is_dir($pdfDir)) {
-        mkdir($pdfDir, 0775, true);
-    }
+    $pdfDir = pdfStorageDir();
     $pdfFile = $pdfDir . '/' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $documentId) . '.pdf';
 
     $pdfService = new PdfService($fees);
-    file_put_contents($pdfFile, $pdfService->render($campaign, $options));
+    $pdfBinary = $pdfService->render($campaign, $options);
+    if ($pdfBinary === '' || strncmp($pdfBinary, '%PDF', 4) !== 0) {
+        throw new \RuntimeException('Falha ao gerar PDF. Verifique a planilha e tente novamente.');
+    }
+    file_put_contents($pdfFile, $pdfBinary);
 
     $repo = new DocumentRepository();
-    $repo->save([
+    $docDbId = $repo->save([
         'document_id' => $documentId,
         'document_title' => $options['document_title'],
         'ads_id' => $campaign['ads_id'],
@@ -69,6 +76,32 @@ try {
         'source_path' => $spreadsheet['stored_path'],
         'pdf_path' => $pdfFile,
     ]);
+
+    (new InventoryRepository())->syncDocumentInventory($docDbId, $campaign['inventory']);
+
+    auditLog(
+        'document.create',
+        'document',
+        $documentId,
+        'Documento registrado no sistema',
+        [
+            'db_id' => $docDbId,
+            'campanha' => $campaign['campanha'] ?? null,
+            'anunciante' => $campaign['anunciante'] ?? null,
+            'document_title' => $options['document_title'],
+        ],
+    );
+    auditLog(
+        'document.pdf_generate',
+        'document',
+        $documentId,
+        'PDF gerado',
+        [
+            'db_id' => $docDbId,
+            'pdf_path' => basename($pdfFile),
+            'campanha' => $campaign['campanha'] ?? null,
+        ],
+    );
 
     $filename = PdfFilename::build(
         (string) ($campaign['campanha'] ?? 'campanha'),

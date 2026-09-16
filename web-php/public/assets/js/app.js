@@ -1,17 +1,24 @@
-const API = {
-  parse: '/maker/api/parse.php',
-  campaign: '/maker/api/campaign.php',
-  fees: '/maker/api/fees.php',
-  generate: '/maker/api/generate.php',
-  history: '/maker/api/history.php',
-  document: '/maker/api/document.php',
+const API = window.OC_MAKER?.api ?? {
+  parse: 'api/parse.php',
+  campaign: 'api/campaign.php',
+  fees: 'api/fees.php',
+  generate: 'api/generate.php',
+  history: 'api/history.php',
+  document: 'api/document.php',
 };
 
 const { withLoading } = AppLoading;
 const { buildSummaryPayload } = OcFinancials;
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+async function fetchJson(url, options = {}) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (err) {
+    throw new Error(
+      `Falha de rede ao chamar ${url}. Verifique se o Apache/PHP está ativo e se o arquivo não excede o limite de upload.`,
+    );
+  }
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     const text = await res.text();
@@ -41,6 +48,10 @@ const state = {
   fees: {},
   sourceDocumentId: null,
   editingFromHistory: false,
+  auth: { user: null, canDelete: false, isAdmin: false },
+  csrfToken: window.OC_MAKER?.csrf_token || '',
+  pendingDeleteId: null,
+  historyDocuments: null,
 };
 const el = (id) => document.getElementById(id);
 
@@ -120,6 +131,7 @@ function getFormData() {
   fd.append('relatoriosAdicionais', el('relatorios').checked ? '1' : '0');
   fd.append('prazoPagamento', el('prazoPagamento').value);
   fd.append('prazoUnidade', el('prazoUnidade').value);
+  if (state.csrfToken) fd.append('csrf_token', state.csrfToken);
   return fd;
 }
 
@@ -198,42 +210,194 @@ function updateSummary(data) {
   updatePrazoPreview(campaign.termino);
 }
 
+function syncAuthFromUser(user, flags = {}) {
+  if (!user) {
+    state.auth.user = null;
+    state.auth.isAdmin = false;
+    state.auth.canDelete = false;
+    return;
+  }
+  state.auth.user = user;
+  state.auth.isAdmin = flags.isAdmin ?? user.role === 'administrador';
+  state.auth.canDelete = flags.canDelete ?? state.auth.isAdmin;
+}
+
+function syncAuthFromServerPayload(data) {
+  syncAuthFromUser(data.user || null, {
+    isAdmin: !!data.is_admin,
+    canDelete: !!data.can_delete,
+  });
+}
+
+async function loadAuth() {
+  if (!API.authMe) return;
+  try {
+    const data = await fetchJson(API.authMe);
+    if (data.csrf_token) state.csrfToken = data.csrf_token;
+    syncAuthFromServerPayload(data);
+    updateAuthNav();
+    if (data.user && window.OC_MAKER) window.OC_MAKER.accountUser = data.user;
+    if (data.user && window.OcAccount) window.OcAccount.syncUser(data.user);
+    if (data.user?.must_change_password) {
+      window.OcForcePassword?.maybeOpen(data.user);
+    }
+    if (state.historyDocuments) {
+      renderHistoryTable(state.historyDocuments);
+    }
+  } catch {
+    if (window.OC_MAKER?.accountUser) {
+      syncAuthFromUser(window.OC_MAKER.accountUser);
+      updateAuthNav();
+    }
+  }
+}
+
+function renderAvatarHtml(user, sizeClass = 'avatar-sm', withRing = false) {
+  if (!user?.avatar_url) {
+    return window.OcIcons?.defaultAvatar(sizeClass, withRing)
+      || `<span class="user-avatar user-avatar--default ${sizeClass}"></span>`;
+  }
+  const ring = withRing ? ' avatar-ring' : '';
+  const safeUrl = String(user.avatar_url).replace(/"/g, '&quot;');
+  const safeName = String(user?.name || 'Usuário').replace(/"/g, '&quot;');
+  return `<span class="user-avatar-img ${sizeClass}${ring}"><img src="${safeUrl}" alt="${safeName}"></span>`;
+}
+
+window.ocUpdateAuthUser = (user) => {
+  syncAuthFromUser(user);
+  if (window.OC_MAKER) window.OC_MAKER.accountUser = user;
+  updateAuthNav();
+};
+
+window.ocIsLoggedIn = () => !!state.auth.user;
+
+function closeUserMenu() {
+  const panel = el('userMenuPanel');
+  const toggle = el('userMenuToggle');
+  if (!panel || !toggle) return;
+  panel.classList.add('hidden');
+  toggle.setAttribute('aria-expanded', 'false');
+}
+
+function initUserMenuIcons() {
+  if (!window.OcIcons) return;
+  const accountIcon = document.querySelector('#userMenuAccount .user-menu-item-icon');
+  const adminIcon = document.querySelector('#userMenuAdmin .user-menu-item-icon');
+  const logIcon = document.querySelector('#userMenuActivityLog .user-menu-item-icon');
+  const logoutIcon = document.querySelector('#logoutBtn .user-menu-item-icon');
+  if (accountIcon) accountIcon.outerHTML = OcIcons.menuItemIcon('user');
+  if (adminIcon) adminIcon.outerHTML = OcIcons.menuItemIcon('users');
+  if (logIcon) logIcon.outerHTML = OcIcons.menuItemIcon('clipboard-list');
+  if (logoutIcon) logoutIcon.outerHTML = OcIcons.menuItemIcon('logout');
+}
+
+function updateAuthNav() {
+  const loggedIn = !!state.auth.user;
+  el('loginLink')?.classList.toggle('hidden', loggedIn);
+  el('userNav')?.classList.toggle('hidden', !loggedIn);
+  el('calculatorLink')?.classList.toggle(
+    'hidden',
+    !(state.auth.isAdmin || state.auth.user?.role === 'financeiro'),
+  );
+  el('userMenuAdmin')?.classList.toggle('hidden', !state.auth.isAdmin);
+  el('userMenuActivityLog')?.classList.toggle('hidden', !state.auth.isAdmin);
+
+  if (loggedIn && state.auth.user) {
+    const u = state.auth.user;
+    const trigger = el('userAvatarTrigger');
+    const menuAvatar = el('userMenuAvatar');
+    if (trigger) trigger.innerHTML = renderAvatarHtml(u, 'avatar-sm', true);
+    if (menuAvatar) menuAvatar.innerHTML = renderAvatarHtml(u, 'avatar-lg', true);
+    const nameEl = el('userMenuName');
+    const emailEl = el('userMenuEmail');
+    const roleEl = el('userMenuRole');
+    if (nameEl) nameEl.textContent = u.display_name || u.name || '';
+    if (emailEl) emailEl.textContent = u.email || '';
+    if (roleEl) roleEl.textContent = u.role || '';
+  } else {
+    closeUserMenu();
+  }
+}
+
+function openDeleteModal(id, documentLabel) {
+  state.pendingDeleteId = id;
+  el('deleteModalMessage').textContent =
+    `Deseja mesmo remover o ID ${documentLabel} da lista? Esta ação não pode ser desfeita.`;
+  el('deleteModal').classList.remove('hidden');
+  el('deleteModal').setAttribute('aria-hidden', 'false');
+  document.body.classList.add('app-busy');
+}
+
+function closeDeleteModal() {
+  state.pendingDeleteId = null;
+  el('deleteModal').classList.add('hidden');
+  el('deleteModal').setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('app-busy');
+}
+
+async function confirmDeleteDocument() {
+  const id = state.pendingDeleteId;
+  if (!id) return;
+  closeDeleteModal();
+  await withLoading('Removendo documento…', async () => {
+    const fd = new FormData();
+    fd.append('id', String(id));
+    fd.append('csrf_token', state.csrfToken);
+    await fetchJson(API.deleteDocument, { method: 'POST', body: fd });
+    await loadHistory();
+  });
+}
+
+function renderHistoryTable(documents) {
+  const box = el('history');
+  if (!window.OcIcons) {
+    box.innerHTML = '<p class="file-meta">Biblioteca de ícones não carregada. Recarregue a página (Ctrl+F5).</p>';
+    return;
+  }
+  if (!documents?.length) {
+    state.historyDocuments = null;
+    box.innerHTML = '<p class="file-meta">Nenhum documento gerado ainda.</p>';
+    return;
+  }
+  state.historyDocuments = documents;
+  box.innerHTML = `<table class="history-table"><thead><tr>
+    <th>ID</th><th>Campanha</th><th>Anunciante</th><th class="history-actions">Ações</th>
+  </tr></thead><tbody>${documents.map((d) => `
+    <tr>
+      <td>${d.document_id}</td>
+      <td>${d.campanha || '—'}</td>
+      <td>${d.anunciante || '—'}</td>
+      <td class="history-actions">
+        <div class="icon-btn-group">${OcIcons.button('eye', 'Resumo', 'icon-btn--table', `data-action="summary" data-id="${d.id}"`)}
+        ${OcIcons.button('edit', 'Editar', 'icon-btn--table', `data-action="edit" data-id="${d.id}"`)}
+        ${state.auth.canDelete ? OcIcons.button('trash', 'Remover', 'icon-btn--table icon-btn--danger', `data-action="delete" data-id="${d.id}" data-label="${d.document_id}"`) : ''}</div>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+
+  box.querySelectorAll('[data-action]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.dataset.id);
+      if (btn.dataset.action === 'summary') {
+        showDocumentSummary(id).catch((e) => showError(e.message));
+      } else if (btn.dataset.action === 'delete') {
+        openDeleteModal(id, btn.dataset.label || String(id));
+      } else {
+        loadDocumentForEdit(id).catch((e) => showError(e.message));
+      }
+    });
+  });
+}
+
 async function loadHistory() {
   const box = el('history');
-  return withLoading('Carregando histórico…', async () => {
+  box.innerHTML = '<p class="file-meta">Carregando histórico…</p>';
   try {
     const data = await fetchJson(API.history);
-    if (!data.documents?.length) {
-      box.innerHTML = '<p class="file-meta">Nenhum documento gerado ainda.</p>';
-      return;
-    }
-    box.innerHTML = `<table class="history-table"><thead><tr>
-      <th>ID</th><th>Campanha</th><th>Anunciante</th><th>Ações</th>
-    </tr></thead><tbody>${data.documents.map((d) => `
-      <tr>
-        <td>${d.document_id}</td>
-        <td>${d.campanha || '—'}</td>
-        <td>${d.anunciante || '—'}</td>
-        <td class="history-actions">
-          <button type="button" class="btn-link" data-action="summary" data-id="${d.id}">Resumo</button>
-          <button type="button" class="btn-link" data-action="edit" data-id="${d.id}">Editar</button>
-        </td>
-      </tr>`).join('')}</tbody></table>`;
-
-    box.querySelectorAll('[data-action]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = Number(btn.dataset.id);
-        if (btn.dataset.action === 'summary') {
-          showDocumentSummary(id).catch((e) => showError(e.message));
-        } else {
-          loadDocumentForEdit(id).catch((e) => showError(e.message));
-        }
-      });
-    });
+    renderHistoryTable(data.documents || []);
   } catch (err) {
+    state.historyDocuments = null;
     box.innerHTML = `<p class="file-meta">Histórico indisponível: ${err.message}</p>`;
   }
-  });
 }
 
 function applyDocumentToForm(doc) {
@@ -252,14 +416,13 @@ function applyDocumentToForm(doc) {
 }
 
 async function showDocumentSummary(id) {
-  return withLoading('Carregando resumo do documento…', async () => {
   hideError();
-  const data = await fetchJson(`${API.document}?id=${id}`);
-  el('summary').innerHTML = `<p class="history-banner">Resumo do documento <strong>${data.document.document_id}</strong></p>`;
-  updateSummary(data.summary);
-  setStep(3);
-  document.querySelector('.summary')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  });
+  try {
+    await loadDocumentForEdit(id);
+    document.querySelector('.summary')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    showError(e.message);
+  }
 }
 
 async function loadDocumentForEdit(id) {
@@ -284,9 +447,11 @@ async function loadDocumentForEdit(id) {
   applyDocumentToForm(doc);
   el('fileMeta').textContent = `Planilha: ${doc.source_file || 'arquivo salvo'} (do histórico)`;
   el('formSection').classList.remove('hidden');
+  el('summary').innerHTML = `<p class="history-banner">Documento <strong>${doc.document_id}</strong></p>`;
   if (summary?.financials?.totals) {
     state.campaignCache[doc.ads_id] = { ...summary.campaign, totals: summary.financials.totals };
     state.campaignSnapshot = state.campaignCache[doc.ads_id];
+    await ensureFeesLoaded();
     refreshSummary();
   } else {
     await loadCampaignSnapshot();
@@ -299,6 +464,11 @@ async function loadDocumentForEdit(id) {
 
 async function loadFees() {
   state.fees = await fetchJson(API.fees);
+}
+
+async function ensureFeesLoaded() {
+  if (Object.keys(state.fees).length) return;
+  await loadFees().catch(() => {});
 }
 
 function refreshSummary() {
@@ -329,10 +499,18 @@ async function loadCampaignSnapshot() {
   const adsId = el('campaign').value;
   if (!adsId) return;
 
-  await withLoading('Carregando dados da campanha…', async () => {
+  const panel = el('summary');
+  const banner = panel.querySelector('.history-banner');
+  const bannerHtml = banner ? banner.outerHTML : '';
+  panel.innerHTML = `${bannerHtml}<p class="file-meta">Carregando dados da campanha…</p>`;
+  try {
     state.campaignSnapshot = await fetchCampaignSnapshot(adsId);
+    await ensureFeesLoaded();
     refreshSummary();
-  });
+  } catch (err) {
+    panel.innerHTML = `${bannerHtml}<p class="file-meta">Erro ao carregar campanha: ${err.message}</p>`;
+    throw err;
+  }
 }
 
 async function handleFile(file) {
@@ -359,7 +537,14 @@ async function handleFile(file) {
       populateCampaigns();
       el('formSection').classList.remove('hidden');
       setStep(2);
-      state.campaignSnapshot = await fetchCampaignSnapshot(el('campaign').value);
+      const firstAdsId = el('campaign').value;
+      if (data.campaign && data.campaign.ads_id === firstAdsId) {
+        state.campaignCache[firstAdsId] = data.campaign;
+        state.campaignSnapshot = data.campaign;
+      } else {
+        state.campaignSnapshot = await fetchCampaignSnapshot(firstAdsId);
+      }
+      await ensureFeesLoaded();
       refreshSummary();
       setStep(3);
       el('generateBtn').disabled = false;
@@ -371,6 +556,10 @@ async function handleFile(file) {
 
 async function onGenerate() {
   if (!state.spreadsheetKey && !state.sourceDocumentId) return;
+  if (!el('campaign').value) {
+    showError('Selecione uma campanha antes de gerar o PDF.');
+    return;
+  }
   hideError();
   return withLoading('Gerando PDF…', async () => {
   try {
@@ -381,11 +570,18 @@ async function onGenerate() {
       fd.set('documentId', id);
     }
     const res = await fetch(API.generate, { method: 'POST', body: fd });
+    const contentType = res.headers.get('content-type') || '';
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error);
+      const err = contentType.includes('application/json') ? await res.json() : { error: await res.text() };
+      throw new Error(err.error || 'Falha ao gerar PDF.');
+    }
+    if (!contentType.includes('application/pdf')) {
+      throw new Error('Resposta inválida ao gerar PDF. Recarregue a página e tente novamente.');
     }
     const blob = await res.blob();
+    if (blob.size < 100) {
+      throw new Error('PDF vazio ou corrompido. Verifique a planilha e tente novamente.');
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -446,12 +642,72 @@ function initDropzone() {
   input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
 }
 
+function initIconButtons() {
+  const newIdBtn = el('newIdBtn');
+  if (newIdBtn && window.OcIcons) {
+    newIdBtn.innerHTML = OcIcons.svg('refresh', 18);
+  }
+  const pdfIcon = document.querySelector('#generateBtn .btn-icon');
+  if (pdfIcon && window.OcIcons) {
+    pdfIcon.innerHTML = OcIcons.svg('pdf', 18);
+  }
+  const dropzone = el('dropzone');
+  if (dropzone && window.OcIcons && !dropzone.querySelector('.dropzone-icon')) {
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'dropzone-icon';
+    iconWrap.innerHTML = OcIcons.svg('upload', 40);
+    dropzone.insertBefore(iconWrap, dropzone.firstChild);
+  }
+}
+
+function initUserMenu() {
+  initUserMenuIcons();
+  const toggle = el('userMenuToggle');
+  const panel = el('userMenuPanel');
+  if (!toggle || !panel) return;
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = panel.classList.toggle('hidden');
+    toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!el('userMenu')?.contains(e.target)) {
+      closeUserMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeUserMenu();
+  });
+}
+
 function init() {
   initSelects();
   initPrazoSelects();
   initDropzone();
-  loadFees().catch(() => {});
-  loadHistory();
+  initIconButtons();
+  initUserMenu();
+  if (window.OC_MAKER?.accountUser) {
+    syncAuthFromUser(window.OC_MAKER.accountUser);
+    updateAuthNav();
+    if (window.OcAccount) {
+      window.OcAccount.init(window.OC_MAKER.accountUser);
+      if (window.OC_MAKER.accountUser.must_change_password) {
+        window.OcForcePassword?.maybeOpen(window.OC_MAKER.accountUser);
+      }
+    }
+  }
+  if (window.OcUsers) window.OcUsers.init();
+  if (window.OcActivityLog) window.OcActivityLog.init();
+  if (window.OcCalculator) window.OcCalculator.init();
+  if (window.OcLogin) window.OcLogin.init();
+  Promise.all([
+    loadFees().catch(() => {}),
+    loadAuth().catch(() => {}),
+    loadHistory().catch(() => {}),
+  ]);
   el('campaign').addEventListener('change', () => loadCampaignSnapshot().catch((e) => showError(e.message)));
   el('tipoVenda').addEventListener('change', () => { toggleConditionalFields(); refreshSummary(); });
   el('planejador').addEventListener('change', refreshSummary);
@@ -464,6 +720,47 @@ function init() {
   });
   el('generateBtn').addEventListener('click', onGenerate);
   el('newIdBtn').addEventListener('click', () => { el('documentId').value = generateDocumentId(); });
+  el('deleteCancelBtn')?.addEventListener('click', closeDeleteModal);
+  el('deleteConfirmBtn')?.addEventListener('click', () => confirmDeleteDocument().catch((e) => showError(e.message)));
+  el('userMenuAccount')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeUserMenu();
+    window.OcAccount?.open();
+  });
+  el('userMenuAdmin')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeUserMenu();
+    if (!window.OcUsers) {
+      showError('Gestão de usuários não carregada. Recarregue a página (Ctrl+F5).');
+      return;
+    }
+    window.OcUsers.open();
+  });
+  el('userMenuActivityLog')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeUserMenu();
+    if (!window.OcActivityLog) {
+      showError('Log de eventos não carregado. Recarregue a página (Ctrl+F5).');
+      return;
+    }
+    window.OcActivityLog.open();
+  });
+  el('calculatorLink')?.addEventListener('click', () => {
+    window.OcCalculator?.open();
+  });
+  el('loginLink')?.addEventListener('click', () => {
+    window.OcLogin?.open();
+  });
+  el('logoutBtn')?.addEventListener('click', async () => {
+    closeUserMenu();
+    const fd = new FormData();
+    fd.append('csrf_token', state.csrfToken);
+    await fetchJson(API.authLogout, { method: 'POST', body: fd });
+    state.auth = { user: null, canDelete: false, isAdmin: false };
+    if (window.OC_MAKER) window.OC_MAKER.accountUser = null;
+    updateAuthNav();
+    await loadHistory();
+  });
   toggleConditionalFields();
   setStep(1);
 }

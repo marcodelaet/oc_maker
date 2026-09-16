@@ -18,6 +18,21 @@ final class Database
             return self::$pdo;
         }
 
+        if (dbSocket() !== '') {
+            try {
+                self::$pdo = self::open('');
+                self::$resolvedHost = 'socket:' . dbSocket();
+
+                return self::$pdo;
+            } catch (PDOException $e) {
+                throw new \RuntimeException(
+                    'Falha na conexão via socket (' . dbSocket() . '): ' . $e->getMessage(),
+                    0,
+                    $e
+                );
+            }
+        }
+
         $lastError = null;
         foreach (self::hostCandidates() as $host) {
             try {
@@ -31,10 +46,13 @@ final class Database
         }
 
         $attempted = implode(', ', self::hostCandidates());
+        $hint = isDevEnvironment()
+            ? ' Em desenvolvimento com Apache em Docker/Linux, tente DB_HOST=host.docker.internal no .env.'
+            : ' Configure DB_HOST no .env com o host MySQL do servidor.';
         throw new \RuntimeException(
             'Falha na conexão com o banco (tentativas: ' . $attempted . '): '
             . ($lastError?->getMessage() ?? 'erro desconhecido')
-            . '. Configure DB_HOST no .env ou config/database.local.php com o host MySQL do servidor.',
+            . '.' . $hint,
             0,
             $lastError
         );
@@ -54,24 +72,21 @@ final class Database
             $hosts[] = $primary;
         }
 
-        $explicitHost = trim(dbSetting('host', ''));
-        $envHost = getenv('DB_HOST');
-        $hasExplicitHost = $explicitHost !== ''
-            || ($envHost !== false && $envHost !== '');
-
-        // Em produção, use somente o host configurado — não tente DNS/resolv do Docker.
-        if (!$hasExplicitHost) {
-            $hosts[] = '127.0.0.1';
-
+        if (isDevEnvironment() && PHP_OS_FAMILY === 'Linux') {
+            foreach (['127.0.0.1', 'host.docker.internal', '172.17.0.1'] as $fallback) {
+                $hosts[] = $fallback;
+            }
+            $wslIp = wslWindowsHostIp();
+            if ($wslIp !== null) {
+                $hosts[] = $wslIp;
+            }
+        } elseif ($primary === '' || $primary === '127.0.0.1' || $primary === 'localhost') {
+            if (!in_array('127.0.0.1', $hosts, true)) {
+                $hosts[] = '127.0.0.1';
+            }
             if (PHP_OS_FAMILY !== 'Linux') {
                 $hosts[] = 'host.docker.internal';
-            } elseif (getenv('DB_ALLOW_DOCKER_HOST') === '1') {
-                $hosts[] = 'host.docker.internal';
             }
-        } elseif ($primary !== '127.0.0.1' && $primary !== 'localhost') {
-            // Host remoto explícito: sem fallbacks automáticos.
-        } elseif (!in_array('127.0.0.1', $hosts, true)) {
-            $hosts[] = '127.0.0.1';
         }
 
         $unique = [];
@@ -91,13 +106,24 @@ final class Database
 
     private static function open(string $host): PDO
     {
-        return new PDO(
-            sprintf(
+        $socket = dbSocket();
+        if ($socket !== '') {
+            $dsn = sprintf(
+                'mysql:unix_socket=%s;dbname=%s;charset=utf8mb4',
+                $socket,
+                dbName()
+            );
+        } else {
+            $dsn = sprintf(
                 'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
                 $host,
                 dbPort(),
                 dbName()
-            ),
+            );
+        }
+
+        return new PDO(
+            $dsn,
             dbUser(),
             dbPass(),
             [

@@ -82,4 +82,43 @@ final class DocumentRepository
         $row = $stmt->fetch();
         return $row !== false ? $row : null;
     }
+
+    public function updateTotalLojas(int $id, int $totalLojas): void
+    {
+        $stmt = Database::connection()->prepare('UPDATE documents SET total_lojas = ? WHERE id = ?');
+        $stmt->execute([$totalLojas, $id]);
+    }
+
+    public function deleteById(int $id): bool
+    {
+        $doc = $this->findById($id);
+        if ($doc === null) {
+            return false;
+        }
+
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            (new InventoryRepository())->deleteLinksByDocument($id);
+
+            $stmt = $pdo->prepare('DELETE FROM calculator_settings WHERE document_id = ?');
+            $stmt->execute([$id]);
+
+            $stmt = $pdo->prepare('DELETE FROM documents WHERE id = ?');
+            $stmt->execute([$id]);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        if (!empty($doc['pdf_path']) && is_file((string) $doc['pdf_path'])) {
+            @unlink((string) $doc['pdf_path']);
+        }
+
+        return true;
+    }
 }
