@@ -157,17 +157,31 @@
     },
   };
 
+  if (!window.__ocNativeFetch) {
+    window.__ocNativeFetch = window.fetch.bind(window);
+  }
+
   if (!window.__ocFetchPatched) {
     window.__ocFetchPatched = true;
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = async function patchedFetch(input, init) {
+    const nativeFetch = window.__ocNativeFetch;
+
+    async function fetchWithClientInfo(input, init) {
+      const options = init && typeof init === "object" ? { ...init } : {};
       try {
-        const options = init && typeof init === "object" ? { ...init } : {};
         options.headers = await window.OcClientInfo.applyHeaders(options.headers);
         return nativeFetch(input, options);
       } catch {
         return nativeFetch(input, init);
       }
+    }
+
+    window.fetch = function patchedFetch(input, init) {
+      // Upload multipart: pass-through síncrono com init original (sem spread/async).
+      // Clonar init ou envolver fetch em async quebra FormData em alguns Chromium/Edge no Windows.
+      if (init?.body instanceof FormData) {
+        return nativeFetch(input, init);
+      }
+      return fetchWithClientInfo(input, init);
     };
   }
 })();

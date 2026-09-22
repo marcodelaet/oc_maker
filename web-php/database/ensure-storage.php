@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require dirname(__DIR__) . '/bootstrap.php';
+
 $root = dirname(__DIR__);
 $dirs = [
     $root . '/storage/uploads',
@@ -9,18 +11,20 @@ $dirs = [
     $root . '/storage/spreadsheets',
     $root . '/storage/spreadsheets/campaign-cache',
     $root . '/storage/pdf',
+    $root . '/storage/creatives',
 ];
 
 $failed = false;
+$mode = PHP_OS_FAMILY === 'Windows' ? 0777 : 0775;
 
 foreach ($dirs as $dir) {
-    if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+    if (!is_dir($dir) && !mkdir($dir, $mode, true) && !is_dir($dir)) {
         fwrite(STDERR, "Falha ao criar: {$dir}\n");
         $failed = true;
         continue;
     }
 
-    $writable = is_writable($dir);
+    $writable = storageDirectoryWritable($dir);
     echo ($writable ? '[OK] ' : '[!!] ') . $dir . PHP_EOL;
     if (!$writable) {
         $failed = true;
@@ -28,10 +32,8 @@ foreach ($dirs as $dir) {
 }
 
 if ($failed) {
-    fwrite(STDERR, PHP_EOL . "Ajuste permissões no servidor (exemplo Linux):\n");
-    fwrite(STDERR, "  sudo chown -R www-data:www-data {$root}/storage\n");
-    fwrite(STDERR, "  sudo chmod -R 775 {$root}/storage\n");
+    fwrite(STDERR, PHP_EOL . storagePermissionHint() . PHP_EOL);
     exit(1);
 }
 
-echo PHP_EOL . 'Storage pronto para uploads e PDFs.' . PHP_EOL;
+echo PHP_EOL . 'Storage pronto para uploads, PDFs e criativos.' . PHP_EOL;

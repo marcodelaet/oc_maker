@@ -29,6 +29,7 @@ final class ExcelService
         'segmento' => 'I',
         'rede' => 'J',
         'dias' => 'K',
+        'publico' => 'M',
         'impactos' => 'O',
         'insercoes' => 'P',
         'desconto' => 'S',
@@ -44,15 +45,21 @@ final class ExcelService
         'termino' => 'AR',
     ];
 
+    private const FORMAT_ERROR =
+        'Não foi possível ler os dados da planilha. Verifique se o arquivo é a planilha original '
+        . 'exportada do Invian (aba INVENTARIO), sem colunas adicionadas, removidas ou deslocadas. '
+        . 'Se necessário, baixe novamente no Invian e reenvie o arquivo correto.';
+
     /** @return list<array<string, string>> */
     public function listCampaigns(string $filePath): array
     {
         $sheet = $this->inventorySheet($filePath);
+        $this->assertInventoryFormat($sheet);
         $campaigns = [];
         foreach ($this->rowsWithValues($sheet, self::COL['campanha']) as $row) {
             $adsId = $this->text($sheet, $row, self::COL['ads_id']);
             $campanha = $this->text($sheet, $row, self::COL['campanha']);
-            if ($adsId !== '' && $campanha !== '' && !$this->isHeaderMetadata($adsId, $campanha)) {
+            if ($this->isValidAdsId($adsId) && $campanha !== '' && !$this->isHeaderMetadata($adsId, $campanha)) {
                 $campaigns[] = [
                     'ads_id' => $adsId,
                     'campanha' => $campanha,
@@ -62,6 +69,10 @@ final class ExcelService
                 ];
             }
         }
+        if ($campaigns === []) {
+            throw new \RuntimeException(self::FORMAT_ERROR);
+        }
+
         return $campaigns;
     }
 
@@ -70,8 +81,12 @@ final class ExcelService
     {
         $spreadsheet = $this->loadSpreadsheet($filePath);
         $sheet = $this->resolveInventorySheet($spreadsheet);
+        $this->assertInventoryFormat($sheet);
         $metadataRow = $this->findMetadataRow($sheet, $adsId);
         $campaignAdsId = $this->text($sheet, $metadataRow, self::COL['ads_id']);
+        if (!$this->isValidAdsId($campaignAdsId)) {
+            throw new \RuntimeException(self::FORMAT_ERROR);
+        }
 
         $data = [
             'source_sheet' => $sheet->getTitle(),
@@ -135,6 +150,7 @@ final class ExcelService
                 'segmento' => $this->text($sheet, $row, self::COL['segmento']),
                 'rede' => $effectiveRede,
                 'dias' => (int) $this->float($sheet, $row, self::COL['dias']),
+                'publico' => $this->float($sheet, $row, self::COL['publico']),
                 'insercoes' => $this->float($sheet, $row, self::COL['insercoes']),
                 'impactos' => $this->float($sheet, $row, self::COL['impactos']),
                 'desconto' => $this->float($sheet, $row, self::COL['desconto']),
@@ -161,7 +177,12 @@ final class ExcelService
             }
         }
 
+        if ($data['inventory'] === []) {
+            throw new \RuntimeException(self::FORMAT_ERROR);
+        }
+
         $data['totals'] = $this->totals($data['inventory']);
+
         return $data;
     }
 
@@ -245,12 +266,12 @@ final class ExcelService
         foreach ($this->rowsWithValues($sheet, self::COL['campanha']) as $row) {
             $rowAds = $this->text($sheet, $row, self::COL['ads_id']);
             $campanha = $this->text($sheet, $row, self::COL['campanha']);
-            if ($campanha !== '' && $rowAds !== '' && !$this->isHeaderMetadata($rowAds, $campanha)) {
+            if ($this->isValidAdsId($rowAds) && $campanha !== '' && !$this->isHeaderMetadata($rowAds, $campanha)) {
                 $candidates[] = ['row' => $row, 'ads_id' => $rowAds];
             }
         }
         if ($candidates === []) {
-            throw new \RuntimeException('Não foi encontrada linha de metadados na aba INVENTARIO.');
+            throw new \RuntimeException(self::FORMAT_ERROR);
         }
         if ($adsId !== null && $adsId !== '') {
             foreach ($candidates as $c) {
@@ -273,15 +294,81 @@ final class ExcelService
         return $bestRow;
     }
 
+    private function assertInventoryFormat(Worksheet $sheet): void
+    {
+        $ak1 = $this->normalizeHeaderLabel($this->text($sheet, 1, 'AK'));
+        $al1 = $this->normalizeHeaderLabel($this->text($sheet, 1, 'AL'));
+
+        if ($ak1 === 'imagem' && $al1 === 'adsid') {
+            throw new \RuntimeException(self::FORMAT_ERROR);
+        }
+
+        $expectedHeaders = [
+            'B' => ['codigo', 'código'],
+            'J' => ['rede'],
+            'AK' => ['adsid'],
+            'AL' => ['agencia', 'agência'],
+            'AM' => ['anunciante'],
+            'AN' => ['planejador'],
+            'AO' => ['campanha'],
+        ];
+
+        $mismatches = 0;
+        foreach ($expectedHeaders as $col => $accepted) {
+            $actual = $this->normalizeHeaderLabel($this->text($sheet, 1, $col));
+            if ($actual === '') {
+                $mismatches++;
+                continue;
+            }
+            if (!$this->headerMatches($actual, $accepted)) {
+                $mismatches++;
+            }
+        }
+
+        if ($mismatches >= 3) {
+            throw new \RuntimeException(self::FORMAT_ERROR);
+        }
+    }
+
+    private function normalizeHeaderLabel(string $value): string
+    {
+        $normalized = mb_strtolower(trim($value));
+        $ascii = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $normalized);
+
+        return preg_replace('/\s+/', '', $ascii !== false ? $ascii : $normalized) ?? $normalized;
+    }
+
+    /** @param list<string> $accepted */
+    private function headerMatches(string $actual, array $accepted): bool
+    {
+        foreach ($accepted as $label) {
+            if ($actual === $this->normalizeHeaderLabel($label)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isValidAdsId(string $adsId): bool
+    {
+        return (bool) preg_match('/^[a-f0-9]{10,16}$/i', trim($adsId));
+    }
+
     private function isHeaderMetadata(string $adsId, string $campanha): bool
     {
+        if ($this->isValidAdsId($adsId)) {
+            return false;
+        }
+
         $set = [mb_strtolower(trim($adsId)), mb_strtolower(trim($campanha))];
-        foreach (['adsid', 'campanha', 'anunciante', 'agência', 'agencia'] as $h) {
+        foreach (['adsid', 'campanha', 'anunciante', 'agência', 'agencia', 'planejador', 'imagem'] as $h) {
             if (in_array($h, $set, true)) {
                 return true;
             }
         }
-        return false;
+
+        return str_contains(mb_strtolower($adsId), 'http');
     }
 
     private function countInventoryRows(Worksheet $sheet, int $metadataRow, string $campaignAdsId): int
@@ -353,7 +440,7 @@ final class ExcelService
         $rowAds = $this->text($sheet, $row, self::COL['ads_id']);
         $campanha = $this->text($sheet, $row, self::COL['campanha']);
 
-        return $rowAds !== '' && $campanha !== '' && !$this->isHeaderMetadata($rowAds, $campanha);
+        return $this->isValidAdsId($rowAds) && $campanha !== '' && !$this->isHeaderMetadata($rowAds, $campanha);
     }
 
     private function isNextCampaignMetadataRow(

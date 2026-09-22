@@ -9,6 +9,7 @@ use PDO;
 final class InventoryRepository
 {
     private static ?bool $documentInventoryHasRedeName = null;
+    private static ?bool $documentInventoryHasPublico = null;
 
     public static function normalizeRedeName(string $name): string
     {
@@ -77,6 +78,7 @@ final class InventoryRepository
     public function linkToDocument(int $documentId, int $inventoryItemId, array $metrics): void
     {
         $redeName = trim((string) ($metrics['rede'] ?? ''));
+        $publico = (float) ($metrics['publico'] ?? 0);
         $values = [
             (int) ($metrics['dias'] ?? 0),
             (float) ($metrics['insercoes'] ?? 0),
@@ -87,38 +89,46 @@ final class InventoryRepository
             (float) ($metrics['cpm'] ?? 0),
         ];
 
-        if (self::documentInventoryHasRedeNameColumn()) {
-            $stmt = Database::connection()->prepare(
-                'INSERT INTO document_inventory
-                 (document_id, inventory_item_id, rede_name, dias, insercoes, impactos, desconto, bruto_negociado, liquido, cpm)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   rede_name = VALUES(rede_name),
-                   dias = VALUES(dias), insercoes = VALUES(insercoes), impactos = VALUES(impactos),
-                   desconto = VALUES(desconto), bruto_negociado = VALUES(bruto_negociado),
-                   liquido = VALUES(liquido), cpm = VALUES(cpm)'
-            );
-            array_splice($values, 0, 0, [
-                $documentId,
-                $inventoryItemId,
-                $redeName !== '' ? $redeName : null,
-            ]);
-            $stmt->execute($values);
+        $hasRede = self::documentInventoryHasRedeNameColumn();
+        $hasPublico = self::documentInventoryHasPublicoColumn();
+        $columns = ['document_id', 'inventory_item_id'];
+        $placeholders = ['?', '?'];
+        $bind = [$documentId, $inventoryItemId];
+        $updates = [];
 
-            return;
+        if ($hasRede) {
+            $columns[] = 'rede_name';
+            $placeholders[] = '?';
+            $bind[] = $redeName !== '' ? $redeName : null;
+            $updates[] = 'rede_name = VALUES(rede_name)';
         }
 
-        $stmt = Database::connection()->prepare(
-            'INSERT INTO document_inventory
-             (document_id, inventory_item_id, dias, insercoes, impactos, desconto, bruto_negociado, liquido, cpm)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               dias = VALUES(dias), insercoes = VALUES(insercoes), impactos = VALUES(impactos),
-               desconto = VALUES(desconto), bruto_negociado = VALUES(bruto_negociado),
-               liquido = VALUES(liquido), cpm = VALUES(liquido)'
-        );
-        array_unshift($values, $documentId, $inventoryItemId);
-        $stmt->execute($values);
+        foreach ([
+            'dias' => $values[0],
+            'insercoes' => $values[1],
+            'impactos' => $values[2],
+            'desconto' => $values[3],
+            'bruto_negociado' => $values[4],
+            'liquido' => $values[5],
+            'cpm' => $values[6],
+        ] as $col => $val) {
+            $columns[] = $col;
+            $placeholders[] = '?';
+            $bind[] = $val;
+            $updates[] = "{$col} = VALUES({$col})";
+        }
+
+        if ($hasPublico) {
+            $columns[] = 'publico';
+            $placeholders[] = '?';
+            $bind[] = $publico;
+            $updates[] = 'publico = VALUES(publico)';
+        }
+
+        $sql = 'INSERT INTO document_inventory (' . implode(', ', $columns) . ') VALUES ('
+            . implode(', ', $placeholders) . ') ON DUPLICATE KEY UPDATE ' . implode(', ', $updates);
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($bind);
     }
 
     /** @param list<array<string, mixed>> $inventory */
@@ -226,11 +236,27 @@ final class InventoryRepository
         return self::$documentInventoryHasRedeName;
     }
 
+    private static function documentInventoryHasPublicoColumn(): bool
+    {
+        if (self::$documentInventoryHasPublico !== null) {
+            return self::$documentInventoryHasPublico;
+        }
+
+        try {
+            $stmt = Database::connection()->query("SHOW COLUMNS FROM document_inventory LIKE 'publico'");
+            self::$documentInventoryHasPublico = $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+        } catch (\Throwable) {
+            self::$documentInventoryHasPublico = false;
+        }
+
+        return self::$documentInventoryHasPublico;
+    }
+
     /** @return list<array<string, mixed>> */
     public function listByDocument(int $documentId): array
     {
         $stmt = Database::connection()->prepare(
-            'SELECT di.*, ii.codigo, ii.denominacao, ii.cidade, ii.estado, ii.rede_name, ii.rede_id,
+            'SELECT di.*, ii.codigo, ii.denominacao, ii.faces, ii.cidade, ii.estado, ii.rede_name, ii.rede_id,
                     rn.group_id, rng.name AS group_name
              FROM document_inventory di
              INNER JOIN inventory_items ii ON ii.id = di.inventory_item_id

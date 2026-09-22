@@ -31,13 +31,51 @@ final class DocumentService
                 'inventoryCount' => count($campaign['inventory']),
                 'totals' => $fin['totals'],
             ],
+            'tipoVenda' => (string) ($document['tipo_venda'] ?? 'SSP'),
             'financials' => [
                 'totals' => $fin['totals'],
                 'feePercent' => $fin['fee_percent'],
                 'feeValue' => $fin['fee_value'],
+                'brutoBase' => $fin['bruto_base'],
+                'faturamento' => $fin['faturamento'],
                 'valorPublisher' => $fin['valor_publisher'],
+                'valorPublisherPdf' => $fin['valor_publisher_pdf'],
                 'cpm' => $fin['cpm'],
             ],
+        ];
+    }
+
+    /** @param array<string, mixed>|null $user */
+    public function findForEditingByAdsId(string $adsId, ?array $user = null): ?array
+    {
+        $adsId = trim($adsId);
+        if ($adsId === '') {
+            return null;
+        }
+
+        $document = $this->documents->findByAdsId($adsId);
+        if ($document === null) {
+            return null;
+        }
+
+        if ($user !== null && !DocumentAccessService::canAccessHomeDocument($user, $document)) {
+            return null;
+        }
+
+        return $this->publicDocument($document);
+    }
+
+    /** @return array{document: array<string, mixed>, summary: array<string, mixed>} */
+    public function loadSummaryOnly(int $id): array
+    {
+        $document = $this->documents->findById($id);
+        if ($document === null) {
+            throw new \RuntimeException('Documento não encontrado.');
+        }
+
+        return [
+            'document' => $this->publicDocument($document),
+            'summary' => $this->summaryFromStored($document),
         ];
     }
 
@@ -67,6 +105,14 @@ final class DocumentService
     /** @param array<string, mixed> $document */
     private function summaryFromStored(array $document): array
     {
+        $budgetBruto = (float) ($document['budget_bruto'] ?? 0);
+        $budgetLiquido = (float) ($document['budget_liquido'] ?? 0);
+        $feePercent = (float) ($document['tech_fee_percent'] ?? 0);
+        $feeRate = $feePercent / 100;
+        $denom = max(0.0001, 1 - $feeRate);
+        $brutoBase = (float) ($document['valor_liquido_ssp'] ?? ($budgetBruto / $denom));
+        $feeValue = (float) ($document['tech_fee_value'] ?? (($budgetBruto * $feeRate) / $denom));
+
         return [
             'campaign' => [
                 'ads_id' => $document['ads_id'] ?? '',
@@ -77,16 +123,20 @@ final class DocumentService
                 'termino' => $document['termino'] ?? null,
                 'inventoryCount' => (int) ($document['total_lojas'] ?? 0),
             ],
+            'tipoVenda' => (string) ($document['tipo_venda'] ?? 'SSP'),
             'financials' => [
                 'totals' => [
                     'insercoes' => (int) ($document['total_insercoes'] ?? 0),
                     'impactos' => (int) ($document['total_impactos'] ?? 0),
-                    'bruto' => (float) ($document['budget_bruto'] ?? 0),
-                    'liquido' => (float) ($document['budget_liquido'] ?? 0),
+                    'bruto' => $budgetBruto,
+                    'liquido' => $budgetLiquido,
                 ],
-                'feePercent' => (float) ($document['tech_fee_percent'] ?? 0),
-                'feeValue' => (float) ($document['tech_fee_value'] ?? 0),
-                'valorPublisher' => (float) ($document['valor_publisher'] ?? 0),
+                'feePercent' => $feePercent,
+                'feeValue' => $feeValue,
+                'brutoBase' => $brutoBase,
+                'faturamento' => $budgetBruto,
+                'valorPublisher' => $budgetLiquido,
+                'valorPublisherPdf' => $budgetBruto,
                 'cpm' => (float) ($document['cpm_medio'] ?? 0),
             ],
         ];

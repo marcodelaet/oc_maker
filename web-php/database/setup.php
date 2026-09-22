@@ -181,6 +181,164 @@ try {
             echo "Migration document_inventory_rede aplicada.\n";
         }
     }
+
+    $campaignMigration = $root . '/database/migrate_20260916_campaign_management.sql';
+    if (is_file($campaignMigration)) {
+        $migSql = file_get_contents($campaignMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration campaign_management aplicada.\n";
+        }
+    }
+
+    $campaignDealsMigration = $root . '/database/migrate_20260917_campaign_deals.sql';
+    if (is_file($campaignDealsMigration)) {
+        $migSql = file_get_contents($campaignDealsMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration campaign_deals aplicada.\n";
+        }
+    }
+
+    $creativeMetadataMigration = $root . '/database/migrate_20260917_creative_metadata.sql';
+    if (is_file($creativeMetadataMigration)) {
+        $migSql = file_get_contents($creativeMetadataMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration creative_metadata aplicada.\n";
+        }
+    }
+
+    $dealReportScreensMigration = $root . '/database/migrate_20260917_deal_report_screens.sql';
+    if (is_file($dealReportScreensMigration)) {
+        $migSql = file_get_contents($dealReportScreensMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')
+                        && !str_contains($e->getMessage(), "Can't DROP")
+                        && !str_contains($e->getMessage(), 'check that column/key exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration deal_report_screens aplicada.\n";
+        }
+    }
+
+    $dealReportNetworkMigration = $root . '/database/migrate_20260918_deal_report_network.sql';
+    if (is_file($dealReportNetworkMigration)) {
+        $migSql = file_get_contents($dealReportNetworkMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')
+                        && !str_contains($e->getMessage(), "Can't DROP")
+                        && !str_contains($e->getMessage(), 'check that column/key exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration deal_report_network aplicada.\n";
+        }
+    }
+
+    $dealDeviceAliasesMigration = $root . '/database/migrate_20260922_deal_device_aliases.sql';
+    if (is_file($dealDeviceAliasesMigration)) {
+        $migSql = file_get_contents($dealDeviceAliasesMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration deal_device_aliases aplicada.\n";
+        }
+    }
+
+    $documentCreatedByMigration = $root . '/database/migrate_20260922_document_created_by.sql';
+    if (is_file($documentCreatedByMigration)) {
+        $migSql = file_get_contents($documentCreatedByMigration);
+        if ($migSql !== false) {
+            foreach (array_filter(array_map('trim', preg_split('/;\s*\R/', $migSql))) as $statement) {
+                if ($statement === '' || str_starts_with($statement, '--')) {
+                    continue;
+                }
+                try {
+                    $pdo->exec($statement);
+                } catch (PDOException $e) {
+                    if (!str_contains($e->getMessage(), 'Duplicate column')
+                        && !str_contains($e->getMessage(), 'Duplicate key name')
+                        && !str_contains($e->getMessage(), 'already exists')) {
+                        throw $e;
+                    }
+                }
+            }
+            echo "Migration document_created_by aplicada.\n";
+        }
+    }
 } catch (Throwable $e) {
     fwrite(STDERR, 'Erro ao aplicar schema: ' . $e->getMessage() . PHP_EOL);
     fwrite(STDERR, "Verifique se o MySQL/MariaDB está em execução e se {$host}:{$port} está acessível.\n");

@@ -291,8 +291,34 @@ function assetUrl(string $path): string
     return url($path) . '?v=' . $version;
 }
 
+function applyApiCorsHeaders(): void
+{
+    if (PHP_SAPI === 'cli') {
+        return;
+    }
+
+    $origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
+    if ($origin === '') {
+        return;
+    }
+
+    $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+    $scheme = $isHttps ? 'https' : 'http';
+    $sameOrigin = $host !== '' && rtrim($origin, '/') === rtrim($scheme . '://' . $host, '/');
+    if ($sameOrigin) {
+        return;
+    }
+
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Access-Control-Allow-Credentials: true');
+    header('Vary: Origin');
+}
+
 function jsonResponse(array $data, int $code = 200): never
 {
+    applyApiCorsHeaders();
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -314,20 +340,70 @@ function auditLog(
     }
 }
 
+function storageRoot(): string
+{
+    return __DIR__ . '/storage';
+}
+
+function storageDirectoryWritable(string $dir): bool
+{
+    if (!is_dir($dir)) {
+        return false;
+    }
+    if (@is_writable($dir)) {
+        return true;
+    }
+
+    $probe = $dir . '/.write_probe_' . bin2hex(random_bytes(4));
+    $written = @file_put_contents($probe, 'ok', LOCK_EX);
+    if ($written !== false) {
+        @unlink($probe);
+
+        return true;
+    }
+
+    return false;
+}
+
+function isDockerEnvironment(): bool
+{
+    return is_file('/.dockerenv');
+}
+
+function storagePermissionHint(): string
+{
+    $root = storageRoot();
+    if (isDockerEnvironment()) {
+        return 'Ambiente Docker (dev no Windows): rode database\\fix-storage-docker.bat '
+            . 'ou docker exec -u root webserver_php sh /var/www/html/oc_maker/web-php/database/fix-storage-docker.sh';
+    }
+
+    if (PHP_OS_FAMILY === 'Windows') {
+        return 'No PowerShell (como administrador): icacls "' . $root . '" /grant "IIS_IUSRS:(OI)(CI)M" /T && icacls "' . $root . '" /grant "Users:(OI)(CI)M" /T. Depois execute: php database/ensure-storage.php';
+    }
+
+    return 'No servidor Linux: sudo chown -R www-data:www-data storage && sudo chmod -R 775 storage. Depois execute: php database/ensure-storage.php';
+}
+
 function ensureStorageDirectory(string $dir, string $label): void
 {
     if (!is_dir($dir)) {
-        if (!@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        $mode = PHP_OS_FAMILY === 'Windows' ? 0777 : 0775;
+        if (!@mkdir($dir, $mode, true) && !is_dir($dir)) {
             jsonResponse([
-                'error' => "Pasta de {$label} não pôde ser criada. Crie storage/ com permissão de escrita para o usuário do Apache.",
+                'error' => "Pasta de {$label} não pôde ser criada. " . storagePermissionHint(),
                 'path' => $dir,
             ], 500);
         }
     }
 
-    if (!is_writable($dir)) {
+    if (!storageDirectoryWritable($dir)) {
+        @chmod($dir, 0775);
+    }
+
+    if (!storageDirectoryWritable($dir)) {
         jsonResponse([
-            'error' => "Sem permissão de escrita em {$label}. No servidor Linux: sudo chown -R www-data:www-data storage && sudo chmod -R 775 storage",
+            'error' => "Sem permissão de escrita em {$label}. " . storagePermissionHint(),
             'path' => $dir,
         ], 500);
     }
@@ -337,6 +413,14 @@ function uploadsStorageDir(): string
 {
     $dir = __DIR__ . '/storage/uploads';
     ensureStorageDirectory($dir, 'uploads');
+
+    return $dir;
+}
+
+function creativesStorageDir(): string
+{
+    $dir = __DIR__ . '/storage/creatives';
+    ensureStorageDirectory($dir, 'criativos');
 
     return $dir;
 }
@@ -438,8 +522,33 @@ function dbHostProbeCandidates(): array
 
 function requireUpload(): string
 {
-    if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+    if (
+        ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+        && empty($_POST)
+        && empty($_FILES)
+        && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0
+    ) {
+        jsonResponse([
+            'error' => 'Arquivo excede post_max_size do PHP ou o upload foi interrompido antes de chegar ao servidor.',
+        ], 413);
+    }
+
+    if (!isset($_FILES['file'])) {
         jsonResponse(['error' => 'Arquivo não enviado ou inválido.'], 400);
+    }
+
+    $uploadError = (int) ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        $messages = [
+            UPLOAD_ERR_INI_SIZE => 'Arquivo excede upload_max_filesize do PHP.',
+            UPLOAD_ERR_FORM_SIZE => 'Arquivo excede o limite permitido para upload.',
+            UPLOAD_ERR_PARTIAL => 'Upload incompleto. Tente novamente.',
+            UPLOAD_ERR_NO_FILE => 'Nenhum arquivo enviado.',
+            UPLOAD_ERR_NO_TMP_DIR => 'Pasta temporária indisponível no servidor.',
+            UPLOAD_ERR_CANT_WRITE => 'Falha ao gravar arquivo temporário no servidor.',
+            UPLOAD_ERR_EXTENSION => 'Upload bloqueado por extensão do PHP.',
+        ];
+        jsonResponse(['error' => $messages[$uploadError] ?? 'Falha no upload do arquivo.'], 400);
     }
     $name = $_FILES['file']['name'] ?? '';
     if (!preg_match('/\.xlsx$/i', $name)) {
@@ -539,6 +648,20 @@ function writeCampaignSnapshotCache(string $spreadsheetPath, string $spreadsheet
 /** @return array{path: string, stored_path: string, source_name: string|null} */
 function resolveExistingSpreadsheetPath(): array
 {
+    $key = trim((string) ($_POST['spreadsheetKey'] ?? ''));
+    if ($key !== '' && preg_match('/^[a-f0-9]{32}$/', $key)) {
+        $storedPath = spreadsheetStorageDir() . '/' . $key . '.xlsx';
+        if (!is_file($storedPath)) {
+            jsonResponse(['error' => 'Sessão da planilha expirou. Envie o arquivo novamente.'], 400);
+        }
+
+        return [
+            'path' => $storedPath,
+            'stored_path' => $storedPath,
+            'source_name' => trim((string) ($_POST['spreadsheetFileName'] ?? '')) ?: null,
+        ];
+    }
+
     $sourceDocumentId = (int) ($_POST['sourceDocumentId'] ?? 0);
     if ($sourceDocumentId > 0) {
         $repo = new OcMaker\DocumentRepository();
@@ -547,23 +670,11 @@ function resolveExistingSpreadsheetPath(): array
         if ($existing === null || $storedPath === '' || !is_file($storedPath)) {
             jsonResponse(['error' => 'Planilha original não encontrada. Envie o arquivo novamente.'], 400);
         }
+
         return [
             'path' => $storedPath,
             'stored_path' => $storedPath,
             'source_name' => $existing['source_file'] ?? null,
-        ];
-    }
-
-    $key = trim((string) ($_POST['spreadsheetKey'] ?? ''));
-    if ($key !== '' && preg_match('/^[a-f0-9]{32}$/', $key)) {
-        $storedPath = spreadsheetStorageDir() . '/' . $key . '.xlsx';
-        if (!is_file($storedPath)) {
-            jsonResponse(['error' => 'Sessão da planilha expirou. Envie o arquivo novamente.'], 400);
-        }
-        return [
-            'path' => $storedPath,
-            'stored_path' => $storedPath,
-            'source_name' => null,
         ];
     }
 
@@ -650,12 +761,44 @@ function csrfToken(): string
     return (string) $_SESSION['csrf_token'];
 }
 
+/** @return array<string, mixed> */
+function jsonRequestBody(): array
+{
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $raw = file_get_contents('php://input');
+    if ($raw === false || trim($raw) === '') {
+        $cached = [];
+
+        return $cached;
+    }
+
+    $decoded = json_decode($raw, true);
+    $cached = is_array($decoded) ? $decoded : [];
+
+    return $cached;
+}
+
 function validateCsrf(?string $token = null): void
 {
     startSecureSession();
-    $token = $token ?? ($_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
-    if ($token === '' || !hash_equals((string) ($_SESSION['csrf_token'] ?? ''), (string) $token)) {
-        jsonResponse(['error' => 'Token CSRF inválido. Recarregue a página.'], 419);
+    if ($token === null || $token === '') {
+        $token = (string) ($_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    }
+    if ($token === '') {
+        $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '');
+        if (stripos($contentType, 'application/json') !== false) {
+            $token = (string) (jsonRequestBody()['csrf_token'] ?? '');
+        }
+    }
+    if ($token === '' || !hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token)) {
+        jsonResponse([
+            'error' => 'Token CSRF inválido. Recarregue a página.',
+            'csrf_token' => csrfToken(),
+        ], 419);
     }
 }
 
@@ -670,5 +813,28 @@ function sanitizeString(string $value, int $maxLength = 255): string
 }
 
 if (PHP_SAPI !== 'cli') {
+    $requestMethod = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
+    $requestUri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+    if ($requestMethod === 'OPTIONS' && str_contains($requestUri, '/api/')) {
+        http_response_code(204);
+        header('Allow: GET, POST, OPTIONS');
+        $origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
+        if ($origin !== '') {
+            $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+            $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+            $scheme = $isHttps ? 'https' : 'http';
+            $sameOrigin = $host !== '' && rtrim($origin, '/') === rtrim($scheme . '://' . $host, '/');
+            if (!$sameOrigin) {
+                header('Access-Control-Allow-Origin: ' . $origin);
+                header('Access-Control-Allow-Credentials: true');
+                header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+                header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token, X-Oc-Client-Info');
+                header('Vary: Origin');
+            }
+        }
+        exit;
+    }
+
     startSecureSession();
 }

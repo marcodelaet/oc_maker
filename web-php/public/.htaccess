@@ -1,3 +1,5 @@
+# Limites de upload: public/.user.ini (evita php_value aqui — pode gerar 500 em alguns Apache).
+
 RewriteEngine On
 
 # Servir arquivos estáticos sem passar pelo front controller

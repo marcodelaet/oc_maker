@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 require dirname(__DIR__, 2) . '/bootstrap.php';
 
+use OcMaker\DocumentAccessService;
+use OcMaker\DocumentRepository;
 use OcMaker\ExcelService;
 use OcMaker\TechFeeService;
 
 try {
+    $user = DocumentAccessService::requireLogin();
     $adsId = $_POST['adsId'] ?? null;
     $tipoVenda = (string) ($_POST['tipoVenda'] ?? 'SSP');
     $planejador = (string) ($_POST['planejadorSsp'] ?? 'Admooh');
@@ -16,8 +19,12 @@ try {
     if ($sourceDocumentId > 0) {
         $repo = new OcMaker\DocumentRepository();
         $existing = $repo->findById($sourceDocumentId);
+        if ($existing === null) {
+            jsonResponse(['error' => 'Documento não encontrado.'], 404);
+        }
+        DocumentAccessService::assertHomeDocumentAccess($user, $existing);
         $path = (string) ($existing['source_path'] ?? '');
-        if ($existing === null || $path === '' || !is_file($path)) {
+        if ($path === '' || !is_file($path)) {
             jsonResponse(['error' => 'Planilha original não encontrada.'], 400);
         }
     } else {
