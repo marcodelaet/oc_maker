@@ -12,6 +12,7 @@ $isDev = isDevEnvironment();
 $accountUser = (new AuthService())->currentUser();
 $isAdmin = $accountUser !== null && ($accountUser['role'] ?? '') === 'administrador';
 $canCalculator = $accountUser !== null && in_array($accountUser['role'] ?? '', ['administrador', 'financeiro'], true);
+$canCampaigns = $accountUser !== null && in_array($accountUser['role'] ?? '', ['administrador', 'programatica'], true);
 $pageTitle = $isDev ? 'OC Maker — DESENVOLVIMENTO' : 'OC Maker';
 $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO' : 'OC Maker — versão PHP · Apache + MariaDB/MySQL';
 ?>
@@ -43,6 +44,7 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
             <button type="button" class="icon-btn icon-btn--header" id="loginLink" title="Entrar" aria-label="Entrar"></button>
             <div id="userNav" class="user-nav hidden">
               <button type="button" class="icon-btn icon-btn--header hidden" id="calculatorLink" title="Calculadora financeira" aria-label="Calculadora financeira"></button>
+              <button type="button" class="icon-btn icon-btn--header hidden" id="campaignsLink" title="Gerenciamento de campanhas" aria-label="Gerenciamento de campanhas"></button>
               <div class="user-menu" id="userMenu">
                 <button type="button" class="user-menu-trigger" id="userMenuToggle" aria-expanded="false" aria-haspopup="true" aria-label="Menu do usuário">
                   <span id="userAvatarTrigger"></span>
@@ -68,6 +70,10 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
                     <a href="#" class="user-menu-item hidden" role="menuitem" id="userMenuActivityLog">
                       <span class="user-menu-item-icon" aria-hidden="true"></span>
                       <span>Log de eventos</span>
+                    </a>
+                    <a href="#" class="user-menu-item hidden" role="menuitem" id="userMenuCampaigns">
+                      <span class="user-menu-item-icon" aria-hidden="true"></span>
+                      <span>Gerenciar campanhas</span>
                     </a>
                     <button type="button" class="user-menu-item user-menu-item--danger" role="menuitem" id="logoutBtn">
                       <span class="user-menu-item-icon" aria-hidden="true"></span>
@@ -244,6 +250,36 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
       <?php require dirname(__DIR__) . '/templates/activity-log-panel.php'; ?>
     </div>
   </div>
+  <?php if ($canCampaigns): ?>
+  <div id="campaignModal" class="account-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="campaignModalTitle">
+    <div class="account-modal-panel account-modal-panel--users">
+      <button type="button" class="account-modal-close" id="campaignModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/campaign-management-panel.php'; ?>
+    </div>
+  </div>
+  <div id="campaignAnalyzeModal" class="account-modal account-modal--stack hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="campaignAnalyzeTitle">
+    <div class="account-modal-panel account-modal-panel--users account-modal-panel--analyze">
+      <button type="button" class="account-modal-close" id="campaignAnalyzeModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/campaign-analyze-panel.php'; ?>
+    </div>
+  </div>
+  <div id="campaignUnitRejectModal" class="account-modal account-modal--stack hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="campaignUnitRejectTitle">
+    <div class="account-modal-backdrop-panel">
+      <?php require dirname(__DIR__) . '/templates/campaign-unit-reject-panel.php'; ?>
+    </div>
+  </div>
+  <div id="campaignOfflineModal" class="account-modal account-modal--stack hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="campaignOfflineTitle">
+    <div class="account-modal-backdrop-panel">
+      <?php require dirname(__DIR__) . '/templates/campaign-offline-panel.php'; ?>
+    </div>
+  </div>
+  <div id="campaignApprovedModal" class="account-modal account-modal--stack hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="campaignApprovedTitle">
+    <div class="account-modal-panel account-modal-panel--users account-modal-panel--analyze">
+      <button type="button" class="account-modal-close" id="campaignApprovedModalClose" aria-label="Fechar">&times;</button>
+      <?php require dirname(__DIR__) . '/templates/campaign-approved-panel.php'; ?>
+    </div>
+  </div>
+  <?php endif; ?>
   <?php endif; ?>
 
   <?php if ($accountUser !== null): ?>
@@ -300,6 +336,7 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
         adminUsers: <?= json_encode(url('api/admin/users.php'), JSON_UNESCAPED_UNICODE) ?>,
         adminActivityLog: <?= json_encode(url('api/admin/activity-log.php'), JSON_UNESCAPED_UNICODE) ?>,
         adminActivityLogExport: <?= json_encode(url('api/admin/activity-log-export.php'), JSON_UNESCAPED_UNICODE) ?>,
+        campaignManagement: <?= json_encode(url('api/campaign-management.php'), JSON_UNESCAPED_UNICODE) ?>,
       },
       accountUser: <?= json_encode($accountUser, JSON_UNESCAPED_UNICODE) ?>,
       urls: {
@@ -309,6 +346,7 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
         adminUsers: <?= json_encode(url('index.php') . '?users=1', JSON_UNESCAPED_UNICODE) ?>,
         activityLog: <?= json_encode(url('index.php') . '?activityLog=1', JSON_UNESCAPED_UNICODE) ?>,
         calculator: <?= json_encode(url('index.php') . '?calculator=1', JSON_UNESCAPED_UNICODE) ?>,
+        campaigns: <?= json_encode(url('index.php') . '?campaigns=1', JSON_UNESCAPED_UNICODE) ?>,
       },
     };
   </script>
@@ -329,6 +367,13 @@ $footerLabel = $isDev ? 'OC Maker — versão PHP · AMBIENTE DE DESENVOLVIMENTO
   <?php if ($accountUser !== null): ?>
   <script src="<?= htmlspecialchars(assetUrl('assets/js/users.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
   <script src="<?= htmlspecialchars(assetUrl('assets/js/activity-log.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php endif; ?>
+  <?php if ($canCampaigns): ?>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/offline-screens.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/campaign-draft.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/campaign-management.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/campaign-pacing-charts.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+  <script src="<?= htmlspecialchars(assetUrl('assets/js/campaign-approved.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
   <?php endif; ?>
   <script src="<?= htmlspecialchars(assetUrl('assets/js/app.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </body>

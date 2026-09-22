@@ -50,6 +50,29 @@ DB_HOST=host.docker.internal
 
 Exibe faixa amarela/preta no topo e a tag **DEV** no título.
 
+### Desenvolvimento: Docker no Windows
+
+O PHP/Apache roda **dentro do container** (usuário `www-data`), com o projeto montado a partir do Windows (`C:\srv\src\oc_maker\...`). Permissões de `storage/` devem ser corrigidas **no container**, não com `icacls` no host.
+
+Após `composer install` e setup do banco:
+
+```cmd
+cd C:\srv\src\oc_maker\web-php
+database\fix-storage-docker.bat
+```
+
+Alternativa direta (PowerShell ou CMD):
+
+```cmd
+docker exec -u root webserver_php sh /var/www/html/oc_maker/web-php/database/fix-storage-docker.sh
+```
+
+**Não use `\` no path dentro do container** — sempre barras `/`.
+
+Opcional: `.\database\fix-storage-docker.ps1` (se a política de execução do PowerShell permitir scripts locais).
+
+Upload de criativos (até 32 MB): se ainda falhar por limite PHP, reinicie o container após deploy de `public/.user.ini` ou ajuste `upload_max_filesize` / `post_max_size` na imagem Docker.
+
 **Produção** (`https://services.invian.ai/maker/`):
 
 ```env
@@ -110,19 +133,23 @@ Configure o **DocumentRoot** para a pasta `public/`:
         AllowOverride All
         Require all granted
     </Directory>
+    # Criativos: até 32 MB por arquivo (ajuste se necessário)
+    php_value upload_max_filesize 32M
+    php_value post_max_size 32M
 </VirtualHost>
 ```
 
-Permissões de escrita em `storage/` (uploads, planilhas arquivadas e PDFs). Em produção Linux:
+**Upload de criativos (mídia):** o projeto inclui `public/.user.ini` e regras em `public/.htaccess` com limite de **32 MB** por arquivo. Se o upload falhar com erro de `post_max_size` / `upload_max_filesize`, confira o `php.ini` do servidor ou reinicie PHP-FPM após alterar `.user.ini`.
 
-```bash
-cd /var/www/html/oc_maker/web-php
-php database/ensure-storage.php
-sudo chown -R www-data:www-data storage
-sudo chmod -R 775 storage
-```
+Permissões de escrita em `storage/` (uploads, planilhas, PDFs e **criativos**):
 
-Se o Apache usar outro usuário (ex.: `apache`), substitua `www-data`.
+| Ambiente | Comando |
+|----------|---------|
+| **Docker no Windows (dev)** | `database\fix-storage-docker.bat` |
+| **Linux (produção)** | `sudo chown -R www-data:www-data storage && sudo chmod -R 775 storage` |
+| **PHP nativo no host** | `php database/ensure-storage.php` |
+
+**Windows sem Docker (Apache/IIS local):** PowerShell como administrador — `icacls ".\storage" /grant "IIS_IUSRS:(OI)(CI)M" /T`
 
 ## Servidor embutido PHP (desenvolvimento)
 
@@ -130,7 +157,7 @@ O servidor `php -S` **não lê `.htaccess`**. Use o router incluído:
 
 ```bash
 cd web-php
-php -S localhost:8080 -t public public/router.php
+php -d upload_max_filesize=32M -d post_max_size=32M -S localhost:8080 -t public public/router.php
 ```
 
 ## Uso
@@ -140,6 +167,53 @@ php -S localhost:8080 -t public public/router.php
 3. Selecione campanha e opções
 4. Gere o PDF — o registro é salvo no MySQL e aparece em **Histórico recente**
 5. No histórico, use **Resumo** para rever os valores ou **Editar** para ajustar o formulário e gerar um novo PDF
+
+## Relatórios de campanha — formato Admooh (manual)
+
+A Admooh ainda **não exporta** relatório diário por tela com o layout abaixo. Enquanto isso, os dados podem ser copiados manualmente da plataforma para uma planilha CSV e importados na aba **Controle** da campanha aprovada.
+
+> **Atenção:** a Admooh está reformulando os formulários da plataforma. Este layout é **provisório** e pode mudar quando houver export oficial — o importador detecta colunas pelo cabeçalho e poderá ser ajustado.
+
+### Arquivo esperado
+
+- Formato: **CSV** (delimitador `;` ou `,`)
+- Primeira linha: cabeçalho com os nomes abaixo (underscores e espaços são equivalentes)
+
+| Coluna | Descrição |
+|--------|-----------|
+| `Date` | Data de referência do dia (`dd/mm/aaaa`) |
+| `Placement_ID` | ID interno da unidade na Admooh (opcional para import) |
+| `Placement_Name` | Nome da unidade na Admooh (opcional) |
+| `Device_ID` | ID interno da tela na Admooh (opcional) |
+| `Device_Name` | Nome da tela na Admooh — usado para cruzar com o código de tela da campanha |
+| `Requested_Bids` | Quantidade de requisições |
+| `Response_Bids` | Respostas da tela (não usado no cálculo atual) |
+| `Executed_Bids` | Impressões / execuções da mídia |
+| `Executed_Impacts` | Impactos |
+
+### Detecção automática
+
+O sistema reconhece a plataforma **admooh** quando o cabeçalho contém `Device_Name`, `Requested_Bids` e `Executed_Impacts`. O mapeamento interno é:
+
+- `Requested_Bids` → requisições
+- `Executed_Bids` → impressões
+- `Executed_Impacts` → impactos
+- Consumo → calculado com o **CPM do Deal** (`impactos × CPM ÷ 1000`) quando o CSV não traz valor financeiro
+
+### Match de telas
+
+`Device_Name` é comparado aos códigos de tela cadastrados na campanha. Sufixos comuns da Admooh são normalizados automaticamente, por exemplo:
+
+- `1204-PDA-T01-JOAQUIM FLORIANO | Face1` → `1204-PDA-T01-JOAQUIM FLORIANO`
+- `1214-PDA-T01-SÓCRATES_App` → `1214-PDA-T01-SÓCRATES`
+
+Se alguma tela não for identificada, a importação **parcial** grava as linhas reconhecidas e abre um diálogo para cada tela pendente:
+
+1. **Adicionar à campanha e ao Deal** — busca a tela no inventário da campanha e inclui a unidade no Deal
+2. **Vincular a uma tela existente** — cria um vínculo permanente entre o nome Admooh e o código interno
+3. **Ignorar identificação** — importa os dados marcados como *Tela não identificada* na grade de controle
+
+Os vínculos ficam salvos por Deal em `campaign_deal_device_aliases` e são reutilizados em importações futuras.
 
 ## API
 

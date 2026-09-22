@@ -10,11 +10,14 @@ require dirname(__DIR__, 2) . '/bootstrap.php';
 
 
 
+use OcMaker\DocumentAccessService;
+use OcMaker\DocumentService;
 use OcMaker\ExcelService;
 
 
 
 try {
+    $user = DocumentAccessService::requireLogin();
 
     $adsId = (string) ($_POST['adsId'] ?? '');
 
@@ -26,11 +29,15 @@ try {
 
 
 
+    $existingDocument = $adsId !== ''
+        ? (new DocumentService())->findForEditingByAdsId($adsId, $user)
+        : null;
+
     $cached = readCampaignSnapshotCache($spreadsheet['path'], $spreadsheetKey, $adsId, $sourceDocumentId);
 
     if ($cached !== null) {
 
-        jsonResponse(['campaign' => $cached]);
+        jsonResponse(['campaign' => $cached, 'existingDocument' => $existingDocument]);
 
     }
 
@@ -48,7 +55,7 @@ try {
 
 
 
-    jsonResponse(['campaign' => $payload]);
+    jsonResponse(['campaign' => $payload, 'existingDocument' => $existingDocument]);
 
 } catch (Throwable $e) {
 

@@ -10,13 +10,251 @@ const API = window.OC_MAKER?.api ?? {
 const { withLoading } = AppLoading;
 const { buildSummaryPayload } = OcFinancials;
 
+function resolveApiUrl(url) {
+  try {
+    return new URL(url, window.location.href).href;
+  } catch {
+    return url;
+  }
+}
+
+function getFileFromFormData(formData) {
+  if (!(formData instanceof FormData)) return null;
+  for (const value of formData.values()) {
+    if (value instanceof File) return value;
+  }
+  return null;
+}
+
+/** Falha cedo se o SO/navegador não conseguir ler o arquivo (ex.: Excel com o .xlsx aberto). */
+async function assertFileReadable(file) {
+  if (!file || !(file instanceof File)) return;
+  try {
+    await file.slice(0, 1).arrayBuffer();
+  } catch {
+    throw new Error(
+      `Não foi possível ler "${file.name}". O arquivo provavelmente está aberto no Excel ` +
+      'ou em uso por outro programa. Feche-o, aguarde alguns segundos e tente novamente.',
+    );
+  }
+}
+
+function isLikelyFileAccessError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const name = String(err?.name || '').toLowerCase();
+  return (
+    name === 'notreadableerror'
+    || msg.includes('failed to fetch')
+    || msg.includes('err_failed')
+    || msg.includes('xhr falhou')
+    || msg.includes('network')
+    || msg.includes('networkerror')
+    || msg.includes('não foi possível ler ou enviar')
+  );
+}
+
+function formatUploadError(file, target, lastErr) {
+  const fileName = file?.name || 'o arquivo';
+  if (isLikelyFileAccessError(lastErr)) {
+    return (
+      `Não foi possível enviar "${fileName}". Verifique se ele não está aberto no Excel ` +
+      '(ou em uso por outro programa), feche-o e tente de novo. ' +
+      'Se o problema continuar, confirme que o Apache/PHP está ativo e recarregue a página (Ctrl+F5).'
+    );
+  }
+  const detail = lastErr?.message ? ` ${lastErr.message}` : '';
+  return `Falha ao enviar "${fileName}".${detail} Destino: ${target}`;
+}
+
+function parseUploadJsonResponse(status, contentType, bodyText) {
+  if (!contentType.includes('application/json')) {
+    const snippet = (bodyText || '').replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error(
+      `Resposta inválida do servidor (esperado JSON, recebido HTML). ` +
+      `Verifique se o Apache aponta para a pasta public/ — ${snippet}`,
+    );
+  }
+  let data;
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    throw new Error('Resposta JSON inválida do servidor.');
+  }
+  if (status < 200 || status >= 300) {
+    throw new Error(data.error || 'Erro na requisição');
+  }
+  return data;
+}
+
+/** Upload via XHR — caminho mais confiável para multipart no Windows/localhost. */
+function postFormDataViaXhr(url, formData, { method = 'POST', timeoutMs = 120000 } = {}) {
+  const target = resolveApiUrl(url);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, target, true);
+    xhr.timeout = timeoutMs;
+    // Não definir Content-Type (boundary automático) nem withCredentials (same-origin já envia cookies).
+    xhr.onload = () => {
+      try {
+        const contentType = xhr.getResponseHeader('Content-Type') || '';
+        resolve(parseUploadJsonResponse(xhr.status, contentType, xhr.responseText || ''));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+    xhr.onerror = () => {
+      reject(new Error('Não foi possível ler ou enviar o arquivo (verifique se não está aberto no Excel).'));
+    };
+    xhr.ontimeout = () => {
+      reject(new Error(
+        `Tempo esgotado ao enviar arquivo para ${target}. Planilhas grandes podem levar até 60s.`,
+      ));
+    };
+    xhr.send(formData);
+  });
+}
+
+/** Upload via fetch nativo (sem patch) — fallback se XHR falhar. */
+async function postFormDataViaNativeFetch(url, formData, { method = 'POST', timeoutMs = 120000 } = {}) {
+  const target = resolveApiUrl(url);
+  const doFetch = window.__ocNativeFetch || window.fetch;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await doFetch(target, {
+      method,
+      body: formData,
+      credentials: 'same-origin',
+      signal: controller?.signal,
+    });
+    const contentType = res.headers.get('content-type') || '';
+    const bodyText = await res.text();
+    return parseUploadJsonResponse(res.status, contentType, bodyText);
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(
+        `Tempo esgotado ao enviar arquivo para ${target}. Planilhas grandes podem levar até 60s.`,
+      );
+    }
+    if (isLikelyFileAccessError(err)) {
+      throw new Error(
+        'Não foi possível ler ou enviar o arquivo (verifique se não está aberto no Excel).',
+      );
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Fallback: POST via form+iframe (sem XHR/fetch — contorna bloqueios de rede do navegador). */
+function postFormDataViaIframe(url, formData, { method = 'POST', timeoutMs = 120000 } = {}) {
+  const target = resolveApiUrl(url);
+  return new Promise((resolve, reject) => {
+    const frameName = `oc_upload_${Date.now()}`;
+    const iframe = document.createElement('iframe');
+    iframe.name = frameName;
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+
+    const form = document.createElement('form');
+    form.method = method;
+    form.action = target;
+    form.target = frameName;
+    form.enctype = 'multipart/form-data';
+    form.style.display = 'none';
+
+    for (const [name, value] of formData.entries()) {
+      if (value instanceof File) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.name = name;
+        const dt = new DataTransfer();
+        dt.items.add(value);
+        input.files = dt.files;
+        form.appendChild(input);
+      } else {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = String(value);
+        form.appendChild(input);
+      }
+    }
+
+    let settled = false;
+    let timer;
+    const cleanup = () => {
+      iframe.remove();
+      form.remove();
+    };
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      cleanup();
+      fn();
+    };
+
+    iframe.addEventListener('load', () => {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        const bodyText = (doc?.body?.innerText || doc?.body?.textContent || '').trim();
+        if (!bodyText) {
+          finish(() => reject(new Error(`Resposta vazia do servidor em ${target}`)));
+          return;
+        }
+        const contentType = doc?.contentType || 'application/json';
+        const data = parseUploadJsonResponse(200, contentType, bodyText);
+        finish(() => resolve(data));
+      } catch (err) {
+        finish(() => reject(err instanceof Error ? err : new Error(String(err))));
+      }
+    });
+
+    timer = setTimeout(() => {
+      finish(() => reject(new Error(
+        `Tempo esgotado ao enviar arquivo para ${target}. Planilhas grandes podem levar até 60s.`,
+      )));
+    }, timeoutMs);
+
+    document.body.append(iframe, form);
+    form.submit();
+  });
+}
+
+async function postFormData(url, formData, options = {}) {
+  const target = resolveApiUrl(url);
+  const file = getFileFromFormData(formData);
+  const attempts = [
+    () => postFormDataViaXhr(url, formData, options),
+    () => postFormDataViaNativeFetch(url, formData, options),
+    () => postFormDataViaIframe(url, formData, options),
+  ];
+  let lastErr;
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw new Error(formatUploadError(file, target, lastErr));
+}
+
 async function fetchJson(url, options = {}) {
+  if (options.body instanceof FormData) {
+    return postFormData(url, options.body, { method: options.method || 'POST' });
+  }
+
   let res;
   try {
     res = await fetch(url, options);
   } catch (err) {
+    const detail = err?.message ? ` (${err.message})` : '';
     throw new Error(
-      `Falha de rede ao chamar ${url}. Verifique se o Apache/PHP está ativo e se o arquivo não excede o limite de upload.`,
+      `Falha de rede ao chamar ${url}${detail}. Verifique se o Apache/PHP está ativo.`,
     );
   }
   const contentType = res.headers.get('content-type') || '';
@@ -43,12 +281,13 @@ const state = {
   file: null,
   campaigns: [],
   spreadsheetKey: null,
+  spreadsheetFileName: null,
   campaignCache: {},
   campaignSnapshot: null,
   fees: {},
   sourceDocumentId: null,
   editingFromHistory: false,
-  auth: { user: null, canDelete: false, isAdmin: false },
+  auth: { user: null, canDelete: false, isAdmin: false, canCampaigns: false },
   csrfToken: window.OC_MAKER?.csrf_token || '',
   pendingDeleteId: null,
   historyDocuments: null,
@@ -113,6 +352,9 @@ function getFormData() {
   const fd = new FormData();
   if (state.spreadsheetKey) {
     fd.append('spreadsheetKey', state.spreadsheetKey);
+    if (state.spreadsheetFileName) {
+      fd.append('spreadsheetFileName', state.spreadsheetFileName);
+    }
   } else if (state.file) {
     fd.append('file', state.file);
   }
@@ -175,20 +417,57 @@ function populateCampaigns() {
   }
 }
 
+function summaryFinancialMarkup(tipoVenda, fin) {
+  const pct = fin.feePercent ?? 0;
+  const brutoBase = fin.brutoBase ?? fin.totals.bruto;
+  const faturamento = fin.faturamento ?? fin.totals.bruto;
+
+  if (tipoVenda === 'Agência') {
+    return `
+      <dt>Bruto agência</dt><dd>${formatBRL(brutoBase)}</dd>
+      <dt>Líquido agência</dt><dd>${formatBRL(faturamento)}</dd>
+    </dl>
+    <div class="highlight">
+      <dl>
+        <dt>Tech fee (${pct}%)</dt><dd>${formatBRL(fin.feeValue)}</dd>
+        <dt>Valor Publisher</dt><dd>${formatBRL(fin.valorPublisher)}</dd>
+        <dt>CPM Médio</dt><dd>${formatBRL(fin.cpm)}</dd>
+      </dl>
+    </div>`;
+  }
+
+  return `
+      <dt>Bruto Publisher</dt><dd>${formatBRL(brutoBase)}</dd>
+      <dt>Faturamento</dt><dd>${formatBRL(faturamento)}</dd>
+    </dl>
+    <div class="highlight">
+      <dl>
+        <dt>Tech Fee (${pct}%)</dt><dd>${formatBRL(fin.feeValue)}</dd>
+        <dt>Valor Publisher</dt><dd>${formatBRL(fin.valorPublisher)}</dd>
+        <dt>CPM Médio</dt><dd>${formatBRL(fin.cpm)}</dd>
+      </dl>
+    </div>`;
+}
+
 function updateSummary(data) {
   const panel = el('summary');
   if (!data) {
     panel.innerHTML = "<p class='file-meta'>Carregue uma planilha para começar.</p>";
     return;
   }
+  const existingBanner = panel.querySelector('.existing-document-banner');
+  const historyBanner = panel.querySelector('.history-banner:not(.existing-document-banner)');
   const { campaign, financials: fin } = data;
+  const tipoVenda = data.tipoVenda || el('tipoVenda')?.value || 'SSP';
   const fmt = (iso) => {
     if (!iso) return '—';
     const [y, m, d] = iso.split('-');
     return `${d}/${m}/${y}`;
   };
-  const banner = panel.querySelector('.history-banner');
-  const bannerHtml = banner ? banner.outerHTML : '';
+  const bannerHtml = [
+    existingBanner?.outerHTML,
+    historyBanner?.outerHTML,
+  ].filter(Boolean).join('');
   panel.innerHTML = `${bannerHtml}
     <dl>
       <dt>Campanha</dt><dd>${campaign.campanha}</dd>
@@ -197,16 +476,7 @@ function updateSummary(data) {
       <dt>Lojas</dt><dd>${campaign.inventoryCount}</dd>
       <dt>Total Inserções</dt><dd>${fin.totals.insercoes.toLocaleString('pt-BR')}</dd>
       <dt>Total Impactos</dt><dd>${fin.totals.impactos.toLocaleString('pt-BR')}</dd>
-      <dt>Budget Bruto</dt><dd>${formatBRL(fin.totals.bruto)}</dd>
-      <dt>Budget Líquido</dt><dd>${formatBRL(fin.totals.liquido)}</dd>
-    </dl>
-    <div class="highlight">
-      <dl>
-        <dt>TECH FEE</dt><dd>${fin.feePercent}% (${formatBRL(fin.feeValue)})</dd>
-        <dt>Valor Publisher</dt><dd>${formatBRL(fin.valorPublisher)}</dd>
-        <dt>CPM Médio</dt><dd>${formatBRL(fin.cpm)}</dd>
-      </dl>
-    </div>`;
+      ${summaryFinancialMarkup(tipoVenda, fin)}`;
   updatePrazoPreview(campaign.termino);
 }
 
@@ -215,17 +485,20 @@ function syncAuthFromUser(user, flags = {}) {
     state.auth.user = null;
     state.auth.isAdmin = false;
     state.auth.canDelete = false;
+    state.auth.canCampaigns = false;
     return;
   }
   state.auth.user = user;
   state.auth.isAdmin = flags.isAdmin ?? user.role === 'administrador';
   state.auth.canDelete = flags.canDelete ?? state.auth.isAdmin;
+  state.auth.canCampaigns = flags.canCampaigns ?? ['administrador', 'programatica'].includes(user.role);
 }
 
 function syncAuthFromServerPayload(data) {
   syncAuthFromUser(data.user || null, {
     isAdmin: !!data.is_admin,
     canDelete: !!data.can_delete,
+    canCampaigns: !!data.can_campaigns,
   });
 }
 
@@ -233,7 +506,10 @@ async function loadAuth() {
   if (!API.authMe) return;
   try {
     const data = await fetchJson(API.authMe);
-    if (data.csrf_token) state.csrfToken = data.csrf_token;
+    if (data.csrf_token) {
+      state.csrfToken = data.csrf_token;
+      if (window.OC_MAKER) window.OC_MAKER.csrf_token = data.csrf_token;
+    }
     syncAuthFromServerPayload(data);
     updateAuthNav();
     if (data.user && window.OC_MAKER) window.OC_MAKER.accountUser = data.user;
@@ -270,6 +546,16 @@ window.ocUpdateAuthUser = (user) => {
 };
 
 window.ocIsLoggedIn = () => !!state.auth.user;
+window.ocLoadAuth = loadAuth;
+
+window.ocMakerCsrfToken = (token) => {
+  if (typeof token === 'string' && token) {
+    state.csrfToken = token;
+    if (window.OC_MAKER) window.OC_MAKER.csrf_token = token;
+    return token;
+  }
+  return state.csrfToken || window.OC_MAKER?.csrf_token || '';
+};
 
 function closeUserMenu() {
   const panel = el('userMenuPanel');
@@ -284,11 +570,15 @@ function initUserMenuIcons() {
   const accountIcon = document.querySelector('#userMenuAccount .user-menu-item-icon');
   const adminIcon = document.querySelector('#userMenuAdmin .user-menu-item-icon');
   const logIcon = document.querySelector('#userMenuActivityLog .user-menu-item-icon');
+  const campaignsIcon = document.querySelector('#userMenuCampaigns .user-menu-item-icon');
   const logoutIcon = document.querySelector('#logoutBtn .user-menu-item-icon');
   if (accountIcon) accountIcon.outerHTML = OcIcons.menuItemIcon('user');
   if (adminIcon) adminIcon.outerHTML = OcIcons.menuItemIcon('users');
   if (logIcon) logIcon.outerHTML = OcIcons.menuItemIcon('clipboard-list');
+  if (campaignsIcon) campaignsIcon.outerHTML = OcIcons.menuItemIcon('megaphone');
   if (logoutIcon) logoutIcon.outerHTML = OcIcons.menuItemIcon('logout');
+  const campaignsHeader = el('campaignsLink');
+  if (campaignsHeader) campaignsHeader.innerHTML = OcIcons.svg('megaphone', 20);
 }
 
 function updateAuthNav() {
@@ -301,6 +591,8 @@ function updateAuthNav() {
   );
   el('userMenuAdmin')?.classList.toggle('hidden', !state.auth.isAdmin);
   el('userMenuActivityLog')?.classList.toggle('hidden', !state.auth.isAdmin);
+  el('userMenuCampaigns')?.classList.toggle('hidden', !state.auth.canCampaigns);
+  el('campaignsLink')?.classList.toggle('hidden', !state.auth.canCampaigns);
 
   if (loggedIn && state.auth.user) {
     const u = state.auth.user;
@@ -390,6 +682,11 @@ function renderHistoryTable(documents) {
 
 async function loadHistory() {
   const box = el('history');
+  if (!state.auth.user) {
+    state.historyDocuments = null;
+    box.innerHTML = '<p class="file-meta">Faça login para ver seu histórico de documentos.</p>';
+    return;
+  }
   box.innerHTML = '<p class="file-meta">Carregando histórico…</p>';
   try {
     const data = await fetchJson(API.history);
@@ -415,11 +712,72 @@ function applyDocumentToForm(doc) {
   toggleConditionalFields();
 }
 
+function resetDocumentFormDefaults() {
+  el('documentId').value = '';
+  el('documentTitle').value = 'Informe de Campanha';
+  el('tipoVenda').value = 'SSP';
+  el('planejador').value = PLANEJADORES[0];
+  el('tipoDeal').value = '';
+  el('dealId').value = '';
+  el('ocInforme').value = '';
+  el('checking').checked = true;
+  el('relatorios').checked = false;
+  el('prazoPagamento').value = '15';
+  el('prazoUnidade').value = 'DFM';
+  toggleConditionalFields();
+}
+
+function updateExistingDocumentBanner(doc) {
+  const panel = el('summary');
+  if (!panel) return;
+  panel.querySelector('.existing-document-banner')?.remove();
+  panel.querySelector('.history-banner:not(.existing-document-banner)')?.remove();
+  if (!doc) return;
+  const banner = document.createElement('p');
+  banner.className = 'history-banner existing-document-banner';
+  banner.innerHTML = `Documento existente <strong>${String(doc.document_id || '').replace(/[<>&"]/g, (c) => ({
+    '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;',
+  }[c]))}</strong> — os dados serão atualizados ao gerar o PDF. Inventário será re-sincronizado com a planilha enviada.`;
+  panel.insertBefore(banner, panel.firstChild);
+}
+
+function applyExistingDocument(doc) {
+  if (!doc) {
+    state.sourceDocumentId = null;
+    return;
+  }
+  state.sourceDocumentId = doc.id;
+  applyDocumentToForm(doc);
+}
+
+function syncExistingDocumentFromApi(existingDocument) {
+  if (state.editingFromHistory) return;
+  if (existingDocument) {
+    applyExistingDocument(existingDocument);
+    updateExistingDocumentBanner(existingDocument);
+    return;
+  }
+  state.sourceDocumentId = null;
+  resetDocumentFormDefaults();
+  el('summary')?.querySelector('.existing-document-banner')?.remove();
+}
+
 async function showDocumentSummary(id) {
   hideError();
   try {
-    await loadDocumentForEdit(id);
-    document.querySelector('.summary')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    await withLoading('Carregando resumo…', async () => {
+      const data = await fetchJson(`${API.document}?id=${id}&mode=summary`);
+      const { document: doc, summary } = data;
+      if (!summary?.campaign || !summary?.financials) {
+        throw new Error('Resumo indisponível para este documento.');
+      }
+      const panel = el('summary');
+      if (panel) {
+        panel.innerHTML = `<p class="history-banner">Documento <strong>${doc.document_id}</strong></p>`;
+      }
+      updateSummary({ ...summary, tipoVenda: summary.tipoVenda || doc.tipo_venda || 'SSP' });
+      document.querySelector('.summary')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
   } catch (e) {
     showError(e.message);
   }
@@ -473,13 +831,14 @@ async function ensureFeesLoaded() {
 
 function refreshSummary() {
   if (!state.campaignSnapshot || !Object.keys(state.fees).length) return;
+  const tipoVenda = el('tipoVenda').value;
   const data = buildSummaryPayload(
     state.campaignSnapshot,
-    el('tipoVenda').value,
+    tipoVenda,
     el('planejador').value,
     state.fees,
   );
-  updateSummary(data);
+  updateSummary({ ...data, tipoVenda });
 }
 
 async function fetchCampaignSnapshot(adsId) {
@@ -487,11 +846,17 @@ async function fetchCampaignSnapshot(adsId) {
     return state.campaignCache[adsId];
   }
   const fd = new FormData();
-  if (state.spreadsheetKey) fd.append('spreadsheetKey', state.spreadsheetKey);
-  if (state.sourceDocumentId) fd.append('sourceDocumentId', String(state.sourceDocumentId));
+  if (state.spreadsheetKey) {
+    fd.append('spreadsheetKey', state.spreadsheetKey);
+    if (state.spreadsheetFileName) fd.append('spreadsheetFileName', state.spreadsheetFileName);
+  }
+  if (state.sourceDocumentId && !state.spreadsheetKey) {
+    fd.append('sourceDocumentId', String(state.sourceDocumentId));
+  }
   fd.append('adsId', adsId);
   const data = await fetchJson(API.campaign, { method: 'POST', body: fd });
   state.campaignCache[adsId] = data.campaign;
+  syncExistingDocumentFromApi(data.existingDocument || null);
   return data.campaign;
 }
 
@@ -500,8 +865,10 @@ async function loadCampaignSnapshot() {
   if (!adsId) return;
 
   const panel = el('summary');
-  const banner = panel.querySelector('.history-banner');
-  const bannerHtml = banner ? banner.outerHTML : '';
+  const bannerHtml = [
+    panel.querySelector('.existing-document-banner')?.outerHTML,
+    panel.querySelector('.history-banner:not(.existing-document-banner)')?.outerHTML,
+  ].filter(Boolean).join('');
   panel.innerHTML = `${bannerHtml}<p class="file-meta">Carregando dados da campanha…</p>`;
   try {
     state.campaignSnapshot = await fetchCampaignSnapshot(adsId);
@@ -519,12 +886,20 @@ async function handleFile(file) {
     showError('Selecione um arquivo .xlsx válido.');
     return;
   }
+  if (!state.auth.user) {
+    window.OcLogin?.open({
+      onSuccess: () => handleFile(file),
+    });
+    return;
+  }
   try {
+    await assertFileReadable(file);
     await withLoading('Lendo planilha e carregando campanhas…', async () => {
       state.file = file;
       state.sourceDocumentId = null;
       state.editingFromHistory = false;
       state.spreadsheetKey = null;
+      state.spreadsheetFileName = null;
       state.campaignCache = {};
       state.campaignSnapshot = null;
       el('summary').innerHTML = '';
@@ -533,10 +908,12 @@ async function handleFile(file) {
       const data = await fetchJson(API.parse, { method: 'POST', body: fd });
       state.campaigns = data.campaigns;
       state.spreadsheetKey = data.spreadsheetKey;
+      state.spreadsheetFileName = data.fileName || file.name;
       el('fileMeta').textContent = `Arquivo: ${file.name}`;
       populateCampaigns();
       el('formSection').classList.remove('hidden');
       setStep(2);
+      syncExistingDocumentFromApi(data.existingDocument || null);
       const firstAdsId = el('campaign').value;
       if (data.campaign && data.campaign.ads_id === firstAdsId) {
         state.campaignCache[firstAdsId] = data.campaign;
@@ -550,6 +927,17 @@ async function handleFile(file) {
       el('generateBtn').disabled = false;
     });
   } catch (err) {
+    state.file = null;
+    state.campaigns = [];
+    state.spreadsheetKey = null;
+    state.spreadsheetFileName = null;
+    state.campaignSnapshot = null;
+    state.campaignCache = {};
+    el('fileMeta').textContent = '';
+    el('summary').innerHTML = '';
+    el('formSection').classList.add('hidden');
+    el('generateBtn').disabled = true;
+    setStep(1);
     showError(err.message);
   }
 }
@@ -558,6 +946,10 @@ async function onGenerate() {
   if (!state.spreadsheetKey && !state.sourceDocumentId) return;
   if (!el('campaign').value) {
     showError('Selecione uma campanha antes de gerar o PDF.');
+    return;
+  }
+  if (!state.auth.user) {
+    window.OcLogin?.open({ onSuccess: () => onGenerate() });
     return;
   }
   hideError();
@@ -701,6 +1093,7 @@ function init() {
   }
   if (window.OcUsers) window.OcUsers.init();
   if (window.OcActivityLog) window.OcActivityLog.init();
+  if (window.OcCampaigns) window.OcCampaigns.init();
   if (window.OcCalculator) window.OcCalculator.init();
   if (window.OcLogin) window.OcLogin.init();
   Promise.all([
@@ -748,6 +1141,18 @@ function init() {
   el('calculatorLink')?.addEventListener('click', () => {
     window.OcCalculator?.open();
   });
+  el('campaignsLink')?.addEventListener('click', () => {
+    window.OcCampaigns?.open();
+  });
+  el('userMenuCampaigns')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeUserMenu();
+    if (!window.OcCampaigns) {
+      showError('Gerenciamento de campanhas não carregado. Recarregue a página (Ctrl+F5).');
+      return;
+    }
+    window.OcCampaigns.open();
+  });
   el('loginLink')?.addEventListener('click', () => {
     window.OcLogin?.open();
   });
@@ -756,7 +1161,7 @@ function init() {
     const fd = new FormData();
     fd.append('csrf_token', state.csrfToken);
     await fetchJson(API.authLogout, { method: 'POST', body: fd });
-    state.auth = { user: null, canDelete: false, isAdmin: false };
+    state.auth = { user: null, canDelete: false, isAdmin: false, canCampaigns: false };
     if (window.OC_MAKER) window.OC_MAKER.accountUser = null;
     updateAuthNav();
     await loadHistory();

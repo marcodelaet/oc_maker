@@ -21,26 +21,41 @@ final class TechFeeService
         if ($planejador !== '' && isset($group[$planejador])) {
             return (float) $group[$planejador];
         }
+
         return (float) ($group['default'] ?? 0);
+    }
+
+    public function mediaCostFromLiquido(float $liquido, float $feePercent): float
+    {
+        $denom = max(0.0001, 1 - ($feePercent / 100));
+
+        return $liquido / $denom;
     }
 
     /** @return array<string, mixed> */
     public function financials(array $campaign, string $tipoVenda, string $planejador): array
     {
         $totals = $campaign['totals'];
-        $valorSsp = (float) $totals['liquido'];
+        $budgetBruto = (float) $totals['bruto'];
+        $budgetLiquido = (float) $totals['liquido'];
         $feePercent = $this->percent($tipoVenda, $planejador);
-        $feeValue = $valorSsp * ($feePercent / 100);
-        $valorPublisher = $valorSsp - $feeValue;
+        $feeRate = $feePercent / 100;
+        $denom = max(0.0001, 1 - $feeRate);
+
+        $brutoBase = $budgetBruto / $denom;
+        $feeValue = $budgetBruto * $feeRate / $denom;
         $impactos = (float) $totals['impactos'];
-        $cpm = $impactos > 0 ? ($valorSsp / $impactos) * 1000 : 0.0;
+        $cpm = $impactos > 0 ? ($budgetBruto / $impactos) * 1000 : 0.0;
 
         return [
             'totals' => $totals,
-            'valor_ssp' => $valorSsp,
+            'valor_ssp' => $brutoBase,
+            'bruto_base' => $brutoBase,
+            'faturamento' => $budgetBruto,
             'fee_percent' => $feePercent,
             'fee_value' => $feeValue,
-            'valor_publisher' => $valorPublisher,
+            'valor_publisher' => $budgetLiquido,
+            'valor_publisher_pdf' => $budgetBruto,
             'cpm' => $cpm,
         ];
     }

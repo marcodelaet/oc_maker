@@ -30,8 +30,14 @@ $logo = PdfBrand::logoDataUri();
 <style>
   @page { margin: 28px 32px 40px 32px; }
   body { font-family: DejaVu Sans, sans-serif; font-size: 9px; color: #111; margin: 0; }
-  .header-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-  .header-table td { vertical-align: top; border: none; padding: 0; }
+  .header-logo-bar {
+    background: #111;
+    padding: 16px 26px 18px 26px;
+    margin-bottom: 10px;
+    line-height: 0;
+    text-align: left;
+  }
+  .header-logo-bar img { height: 44px; width: auto; display: block; }
   .company { text-align: right; font-size: 8px; line-height: 1.45; color: #333; }
   .title-bar { background: #2b2b2b; color: #fff; text-align: center; font-size: 14px; font-weight: bold; padding: 8px 0; margin: 8px 0 6px; }
   .doc-id { text-align: center; font-size: 11px; font-weight: bold; margin-bottom: 12px; }
@@ -59,17 +65,13 @@ $logo = PdfBrand::logoDataUri();
 </head>
 <body>
 
-<table class="header-table">
-  <tr>
-    <td style="width:100%;text-align:center">
-      <?php if ($logo !== ''): ?>
-        <img src="<?= $logo ?>" alt="Retail Media" style="height:52px;width:auto">
-      <?php else: ?>
-        <strong style="font-size:18px;color:#111">Retail Media</strong>
-      <?php endif; ?>
-    </td>
-  </tr>
-</table>
+<div class="header-logo-bar">
+  <?php if ($logo !== ''): ?>
+    <img src="<?= $logo ?>" alt="Retail Media">
+  <?php else: ?>
+    <strong style="font-size:18px;color:#fff;line-height:1.2">Retail Media</strong>
+  <?php endif; ?>
+</div>
 
 <div class="title-bar"><?= htmlspecialchars((string) $options['document_title']) ?></div>
 <div class="doc-id">#<?= htmlspecialchars((string) $options['document_id']) ?></div>
@@ -121,7 +123,7 @@ $logo = PdfBrand::logoDataUri();
       <td><?= htmlspecialchars((string) $row['rede']) ?></td>
       <td class="right"><?= $num((float) $row['insercoes']) ?></td>
       <td class="right"><?= $num((float) $row['impactos']) ?></td>
-      <td class="right"><?= $fmt((float) $row['bruto']) ?></td>
+      <td class="right"><?= $fmt($mediaCostFromLiquido((float) $row['liquido'])) ?></td>
       <td class="right"><?= $fmt((float) $row['liquido']) ?></td>
     </tr>
   <?php endforeach; ?>
@@ -129,7 +131,7 @@ $logo = PdfBrand::logoDataUri();
       <td>TOTAIS</td><td></td>
       <td class="right"><?= $num((float) $fin['totals']['insercoes']) ?></td>
       <td class="right"><?= $num((float) $fin['totals']['impactos']) ?></td>
-      <td class="right"><?= $fmt((float) $fin['totals']['bruto']) ?></td>
+      <td class="right"><?= $fmt($mediaCostFromLiquido((float) $fin['totals']['liquido'])) ?></td>
       <td class="right"><?= $fmt((float) $fin['totals']['liquido']) ?></td>
     </tr>
   </tbody>
@@ -137,8 +139,8 @@ $logo = PdfBrand::logoDataUri();
 
 <div class="financial">
   <div><span class="label">VALOR LÍQUIDO (SSP):</span> <?= $fmt((float) $fin['valor_ssp']) ?></div>
-  <div><span class="label">TECH FEE (%):</span> <?= number_format((float) $fin['fee_percent'], 0, ',', '.') ?> &nbsp; <?= $fmt((float) $fin['fee_value']) ?></div>
-  <div><span class="label">VALOR LÍQUIDO (PUBLISHER):</span> <?= $fmt((float) $fin['valor_publisher']) ?></div>
+  <div><span class="label">TECH FEE (<?= number_format((float) $fin['fee_percent'], 0, ',', '.') ?>%):</span> <?= $fmt((float) $fin['fee_value']) ?></div>
+  <div><span class="label">VALOR LÍQUIDO (PUBLISHER):</span> <?= $fmt((float) ($fin['valor_publisher_pdf'] ?? $fin['faturamento'] ?? 0)) ?></div>
   <div><span class="label">CPM MÉDIO:</span> <?= $fmt((float) $fin['cpm']) ?></div>
 </div>
 

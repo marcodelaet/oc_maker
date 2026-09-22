@@ -235,29 +235,37 @@ def load_campaign(xlsx_path: Path, ads_id: str | None = None) -> CampaignData:
         or _excel_date(reader.cell(inv, metadata_row, COL["termino"])),
     )
 
-    current_ads = campaign_ads_id
-    for row in reader.sheet_rows_with_values_in_col(inv, COL["codigo"]):
-        if row < metadata_row:
-            continue
-        row_ads = _as_text(reader.cell(inv, row, COL["ads_id"]))
-        if row_ads:
-            if row < metadata_row:
-                continue
-            if row > metadata_row and row_ads != campaign_ads_id:
-                break
-            current_ads = row_ads
-        elif row > metadata_row and current_ads != campaign_ads_id:
-            continue
+    last_rede = ""
+    row_markers = set(reader.sheet_rows_with_values_in_col(inv, COL["codigo"]))
+    row_markers.update(reader.sheet_rows_with_values_in_col(inv, COL["rede"]))
+    row_markers.add(metadata_row)
+    highest_row = max(row_markers)
+    for row in range(metadata_row, highest_row + 1):
+        if _is_next_campaign_metadata_row(reader, inv, row, metadata_row, campaign_ads_id):
+            break
 
         codigo = _as_text(reader.cell(inv, row, COL["codigo"]))
         rede = _as_text(reader.cell(inv, row, COL["rede"]))
-        if not codigo or not rede:
+
+        if not codigo and rede:
+            if not _is_group_header_rede(rede) and not _is_column_header_label(rede):
+                last_rede = rede
             continue
+
+        if not codigo or _is_inventory_summary_row(codigo) or _is_column_header_label(codigo):
+            continue
+
+        effective_rede = rede or last_rede
+        if not effective_rede or _is_group_header_rede(effective_rede) or _is_column_header_label(effective_rede):
+            continue
+
+        if rede:
+            last_rede = rede
 
         data.inventory.append(
             InventoryRow(
                 codigo=codigo,
-                rede=rede,
+                rede=effective_rede,
                 insercoes=_as_float(reader.cell(inv, row, COL["insercoes"])),
                 impactos=_as_float(reader.cell(inv, row, COL["impactos"])),
                 bruto=_as_float(reader.cell(inv, row, COL["bruto"])),
@@ -279,6 +287,49 @@ def load_campaign(xlsx_path: Path, ads_id: str | None = None) -> CampaignData:
 def _is_header_metadata(row_ads: str, campanha: str) -> bool:
     normalized = {row_ads.strip().lower(), campanha.strip().lower()}
     return normalized & {"adsid", "campanha", "anunciante", "agência", "agencia"}
+
+
+def _is_group_header_rede(rede: str) -> bool:
+    normalized = rede.strip().upper()
+    return (
+        normalized.startswith("PRAÇA ")
+        or normalized.startswith("PRACA ")
+        or normalized in {"TOTAL", "TOTAIS"}
+    )
+
+
+def _is_inventory_summary_row(codigo: str) -> bool:
+    return codigo.strip().upper() in {"TOTAL", "TOTAIS", "SUBTOTAL", "SUB-TOTAL"}
+
+
+def _is_column_header_label(value: str) -> bool:
+    return value.strip().lower() in {
+        "código",
+        "codigo",
+        "rede",
+        "veículo",
+        "veiculo",
+        "denominação",
+        "denominacao",
+    }
+
+
+def _is_campaign_metadata_row(reader: XlsxReader, sheet: str, row: int) -> bool:
+    row_ads = _as_text(reader.cell(sheet, row, COL["ads_id"]))
+    campanha = _as_text(reader.cell(sheet, row, COL["campanha"]))
+    return bool(row_ads and campanha and not _is_header_metadata(row_ads, campanha))
+
+
+def _is_next_campaign_metadata_row(
+    reader: XlsxReader,
+    sheet: str,
+    row: int,
+    metadata_row: int,
+    campaign_ads_id: str,
+) -> bool:
+    if row <= metadata_row or not _is_campaign_metadata_row(reader, sheet, row):
+        return False
+    return _as_text(reader.cell(sheet, row, COL["ads_id"])) != campaign_ads_id
 
 
 def _find_metadata_row(reader: XlsxReader, ads_id: str | None) -> int:

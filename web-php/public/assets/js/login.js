@@ -1,6 +1,8 @@
 (function () {
   let initialized = false;
   let modalReturnFocus = null;
+  /** @type {null | (() => void | Promise<void>)} */
+  let pendingAfterLogin = null;
 
   function el(id) {
     return document.getElementById(id);
@@ -79,7 +81,27 @@
         window.OC_MAKER.csrf_token = data.csrf_token;
       }
 
+      if (data.user && window.ocUpdateAuthUser) {
+        window.ocUpdateAuthUser(data.user);
+      }
+      if (data.csrf_token && window.ocMakerCsrfToken) {
+        window.ocMakerCsrfToken(data.csrf_token);
+      }
+
       close();
+
+      if (pendingAfterLogin) {
+        const next = pendingAfterLogin;
+        pendingAfterLogin = null;
+        try {
+          await window.ocLoadAuth?.();
+        } catch {
+          /* ignore refresh errors */
+        }
+        await next();
+        return;
+      }
+
       window.location.assign(window.OC_MAKER?.urls?.home || 'index.php');
     } catch (err) {
       showAlert(err.message);
@@ -117,9 +139,16 @@
     }
   }
 
-  function open() {
-    if (isLoggedIn()) return;
+  function open(options = {}) {
+    if (isLoggedIn()) {
+      if (typeof options.onSuccess === 'function') {
+        Promise.resolve(options.onSuccess()).catch(() => {});
+      }
+      return;
+    }
     if (document.body.classList.contains('force-password-open')) return;
+
+    pendingAfterLogin = typeof options.onSuccess === 'function' ? options.onSuccess : null;
 
     const modal = el('loginModal');
     if (!modal) {
@@ -143,6 +172,7 @@
   function close() {
     const modal = el('loginModal');
     if (!modal) return;
+    pendingAfterLogin = null;
     resetForm();
     restoreFocusAfterModal();
     modal.classList.add('hidden');

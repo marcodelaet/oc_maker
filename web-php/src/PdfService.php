@@ -22,6 +22,10 @@ final class PdfService
             (string) ($options['tipo_venda'] ?? 'SSP'),
             (string) ($options['planejador_ssp'] ?? '')
         );
+        $mediaCostFromLiquido = fn(float $liquido): float => $this->fees->mediaCostFromLiquido(
+            $liquido,
+            (float) $fin['fee_percent'],
+        );
 
         ob_start();
         include dirname(__DIR__) . '/templates/pdf.php';

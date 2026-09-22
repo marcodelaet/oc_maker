@@ -8,6 +8,7 @@ final class Permission
 {
     public const ROLES = [
         'administrador',
+        'programatica',
         'business_intelligence',
         'checking',
         'financeiro',
@@ -19,6 +20,7 @@ final class Permission
     {
         return match ($role) {
             'administrador' => ['*'],
+            'programatica' => ['pdf', 'history', 'inventory', 'campaigns'],
             'financeiro' => ['pdf', 'history', 'calculator', 'inventory'],
             'business_intelligence' => ['pdf', 'history', 'inventory', 'reports'],
             'checking' => ['pdf', 'history', 'inventory'],

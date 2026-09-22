@@ -4,13 +4,20 @@
 
 declare(strict_types=1);
 
-
+set_time_limit(120);
+ini_set('memory_limit', '256M');
 
 require dirname(__DIR__, 2) . '/bootstrap.php';
 
-
-
+use OcMaker\DocumentAccessService;
+use OcMaker\DocumentService;
 use OcMaker\ExcelService;
+
+$user = DocumentAccessService::requireLogin();
+
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
 
 
 
@@ -27,10 +34,13 @@ try {
 
 
     $campaign = null;
+    $existingDocument = null;
 
     if ($campaigns !== []) {
 
         $firstAdsId = $campaigns[0]['ads_id'];
+
+        $existingDocument = (new DocumentService())->findForEditingByAdsId($firstAdsId, $user);
 
         $full = $excel->loadCampaign($archived['path'], $firstAdsId);
 
@@ -62,6 +72,8 @@ try {
         'fileName' => $archived['source_name'],
 
         'campaign' => $campaign,
+
+        'existingDocument' => $existingDocument,
 
     ]);
 
